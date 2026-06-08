@@ -64,49 +64,64 @@ for i in "" 2 3 4 5; do
 done
 [ $HAS_KEY -eq 0 ] && exit 0
 
-DIFF=$(git diff --cached -- '*.php' '*.js' '*.mustache' '*.css' '*.xml' | head -n 500)
+DIFF=$(git diff --cached -- '*.php' '*.js' '*.mustache' '*.css' '*.xml' | head -n 700)
 [ -z "$DIFF" ] && exit 0
 
 PROMPT_FILE=$(mktemp)
 trap "rm -f $PROMPT_FILE ${RESULT_FILES[*]}" EXIT
 
 cat > "$PROMPT_FILE" << 'RULES'
-Você é um revisor de código Moodle. Analise o diff abaixo verificando APENAS o que ferramentas automáticas não cobrem.
+Você é um revisor de código Moodle. Analise o diff abaixo verificando APENAS o que ferramentas automáticas não cobrem. Seja conservador: só reporte quando tiver certeza. Dúvidas devem resultar em APROVADO, não em BLOQUEADO.
 
 === PHP (*.php) ===
-1. PHPDoc: @param sem descrição, @return ausente quando há return, @var ausente em propriedades, tipos errados (use int/bool/string minúsculos)
-2. Strings lang/: chaves novas fora da ordem alfabética estrita
-3. $DB dentro de loops foreach/for/while — antipadrão N+1
-4. echo $var sem s(), format_string() ou format_text()
-5. require_sesskey() ausente em código que processa $_POST
-6. Texto hardcoded em PHP que deveria usar get_string()
-7. Type hints e return types ausentes em funções/métodos novos
-8. SQL com variáveis concatenadas diretamente (risco de injeção SQL)
-9. require_capability() ou has_capability() ausente antes de ação sensível
-10. defined('MOODLE_INTERNAL') || die() ausente onde obrigatório
+1.  PHPDoc: @param sem descrição, @return ausente quando há return, @var ausente em propriedades de classe, tipos errados (int/bool/string minúsculos, não Int/Bool/String)
+2.  Strings lang/: chave nova inserida fora da ordem alfabética estrita no arquivo
+3.  $DB->get_record/get_records/get_field dentro de loop foreach/for/while — antipadrão N+1
+4.  echo $var sem s(), format_string() ou format_text() — só flagre quando a variável claramente vier de dado externo ou do banco
+5.  require_sesskey() ausente em bloco que processa $_POST — só quando o processamento e a ausência são visíveis no mesmo diff
+6.  Texto em português ou inglês hardcoded em PHP que deveria usar get_string() — ignorar mensagens de erro de desenvolvedor (coding_exception, debugging())
+7.  Type hints e return types ausentes em função ou método novo adicionado no diff
+8.  SQL montado com concatenação ou interpolação de variável diretamente na string (risco de injeção SQL)
+9.  require_capability() ou has_capability() ausente antes de ação que modifica dados ou exibe conteúdo sensível — só quando a ausência é clara no diff
+10. defined('MOODLE_INTERNAL') || die() ausente em arquivo que não é entry point e não define exclusivamente uma classe/interface/trait
+11. Script de entrada (chama require config.php) que renderiza HTML sem chamar require_login() — ignorar CLI scripts e AJAX handlers
+12. unserialize() chamado com dado que pode vir de entrada externa — usar unserialize_object()
+13. format_text() com ['noclean' => true] — proibido sem justificativa explícita
+14. require_once ou include para carregar arquivo de classes/ — Moodle faz autoload via namespace; remover o require_once
+15. print_error() chamado — depreciado desde Moodle 4.0; substituir por throw new moodle_exception()
+16. $DB->get_record() filtrando apenas por ['id' => $var] onde $var vem de required_param/optional_param visível no mesmo diff, sem JOIN ou filtro adicional de instanceid/contextid/courseid
+17. Atributo style="..." em tag HTML dentro de arquivo .php ou .mustache — criar classe semântica em styles.css
+18. Tag <script> inserida diretamente em PHP ou Mustache — usar AMD via $PAGE->requires->js_call_amd()
+19. String em lang/pt_br/ usando "aluno" ou "alunos" — padrão AMOS é "estudante"/"estudantes"
+20. String adicionada em lang/en/ sem correspondente em lang/pt_br/ — reportar apenas quando o diff inclui alterações em ambos os arquivos lang/
 
 === JavaScript (amd/src/*.js) ===
-11. var declarado — usar const (padrão) ou let (só se reatribuído); var é proibido
-12. jQuery.ajax() ou execCommand() — proibidos no Moodle
-13. Import de core/modal_factory — removido no Moodle 5.2; usar core/modal
-14. == ou != — usar === ou !==
-15. Strings de UI hardcoded visíveis ao usuário — usar core/str
-16. Cadeia de .then() onde async/await seria mais claro
+21. var declarado — usar const por padrão ou let quando a variável é reatribuída; var é proibido
+22. jQuery.ajax() ou execCommand() chamados — proibidos no Moodle
+23. Import de core/modal_factory — removido no Moodle 5.2; usar core/modal
+24. Comparação com == ou != — usar === ou !==
+25. String de interface visível ao usuário hardcoded (não apenas comentários ou nomes internos) — usar core/str
+26. Cadeia longa de .then().then() onde async/await tornaria o código mais legível
 
 === Mustache (*.mustache) ===
-17. @template ausente no segundo bloco {{! ... }} do arquivo
-18. Heading vazio: <h1> a <h6> sem conteúdo ou variável
-19. Classe sr-only usada sozinha (conflito com Boost em tabelas e .activity-item)
-20. Classe Bootstrap 4 depreciada: ml-, mr-, text-right, float-left, float-right, data-dismiss sem data-bs-dismiss
+27. @template ausente no segundo bloco {{! ... }} do arquivo
+28. Heading vazio: <h1> a <h6> sem conteúdo, variável ou condição
+29. Classe sr-only usada sozinha dentro de .table, .table-responsive ou .activity-item (conflito com Boost)
+30. Classe Bootstrap 4 depreciada: ml-*, mr-*, text-right, float-left, float-right, ou data-dismiss sem o equivalente data-bs-dismiss
+31. Ícone decorativo <i class="fa-..."> ou <span class="fa-..."> sem texto visível adjacente e sem aria-hidden="true"
+32. <img> sem atributo alt (decorativas usam alt=""; descritivas precisam de texto no alt)
+33. Botão ou link que contém apenas ícone sem texto visível e sem aria-label ou <span class="visually-hidden">
+34. <th> sem atributo scope="col" ou scope="row"
+35. <input>, <select> ou <textarea> sem <label> associado ou aria-label — placeholder não substitui label
 
 === CSS (*.css) ===
-21. !important — proibido; aumentar especificidade em vez disso
-22. Seletor sem escopo de path-class (.path-* ou body.path-*) — previne vazamento de estilos
-23. Valor hexadecimal hardcoded sem variável CSS — usar var(--nome, #fallback)
+36. !important — proibido; resolver o conflito aumentando especificidade do seletor
+37. Seletor CSS sem escopo de path-class (.path-* ou body.path-*) — previne vazamento de estilos para outras páginas
+38. Valor hexadecimal hardcoded fora de var() — ex: color: #333 deve ser var(--nome, #333); ignorar se já está dentro de var()
 
 === XML (db/*.xml) ===
-24. Nome de tabela (sem prefixo mdl_) com mais de 53 caracteres
-25. Nome de campo com mais de 63 caracteres
+39. Nome de tabela (sem prefixo mdl_) com mais de 53 caracteres
+40. Nome de campo com mais de 63 caracteres
 
 Responda EXATAMENTE neste formato:
 - Se não há problemas: primeira linha "APROVADO" e nada mais

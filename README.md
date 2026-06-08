@@ -11,53 +11,68 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 
 ### PHP
 
-| # | Regra | Por que PHPCS não pega |
-|---|---|---|
-| 1 | PHPDoc incompleto (`@param` sem descrição, `@return` ausente, tipos errados) | PHPCS verifica presença, não qualidade |
-| 2 | Strings `lang/` fora de ordem alfabética | Requer leitura semântica do arquivo |
-| 3 | `$DB` dentro de loop — antipadrão N+1 | Análise de fluxo de controle |
-| 4 | `echo $var` sem `s()` / `format_string()` / `format_text()` | Rastreamento de origem da variável |
-| 5 | `require_sesskey()` ausente em código que processa `$_POST` | Rastreamento de fluxo HTTP |
-| 6 | Texto hardcoded que deveria usar `get_string()` | Detecção semântica de literais |
-| 7 | Type hints e return types ausentes em funções/métodos novos | PHPCS exige só em alguns contextos |
-| 8 | SQL com variáveis concatenadas (risco de injeção) | Análise de interpolação |
-| 9 | `require_capability()` ausente antes de ação sensível | Rastreamento de contexto de permissão |
-| 10 | `defined('MOODLE_INTERNAL') \|\| die()` ausente | Requer contexto do tipo de arquivo |
+| # | Regra |
+|---|---|
+| 1 | PHPDoc: `@param` sem descrição, `@return` ausente, `@var` ausente em propriedades, tipos errados |
+| 2 | Strings `lang/`: chave nova fora da ordem alfabética estrita |
+| 3 | `$DB` dentro de loop `foreach/for/while` — antipadrão N+1 |
+| 4 | `echo $var` sem `s()` / `format_string()` / `format_text()` |
+| 5 | `require_sesskey()` ausente em bloco que processa `$_POST` |
+| 6 | Texto hardcoded que deveria usar `get_string()` |
+| 7 | Type hints e return types ausentes em funções/métodos novos |
+| 8 | SQL com variáveis concatenadas diretamente (risco de injeção SQL) |
+| 9 | `require_capability()` ausente antes de ação sensível |
+| 10 | `defined('MOODLE_INTERNAL') \|\| die()` ausente onde obrigatório |
+| 11 | Script de entrada sem `require_login()` antes de renderizar HTML |
+| 12 | `unserialize()` com dado externo — usar `unserialize_object()` |
+| 13 | `format_text()` com `['noclean' => true]` — proibido |
+| 14 | `require_once` para arquivo em `classes/` — Moodle faz autoload |
+| 15 | `print_error()` — depreciado; usar `throw new moodle_exception()` |
+| 16 | `$DB->get_record()` filtrando só por `id` externo sem validação de `instanceid`/`contextid` |
+| 17 | `style="..."` inline em HTML — criar classe em `styles.css` |
+| 18 | Tag `<script>` em PHP ou Mustache — usar AMD via `js_call_amd()` |
+| 19 | String em `lang/pt_br/` com "aluno/alunos" — usar "estudante/estudantes" |
+| 20 | String adicionada em `lang/en/` sem correspondente em `lang/pt_br/` |
 
 ### JavaScript (`amd/src/*.js`)
 
-| # | Regra | Por que ferramentas automáticas não pegam |
-|---|---|---|
-| 11 | `var` declarado (usar `const` ou `let`) | ESLint opcional, não configurado por padrão |
-| 12 | `jQuery.ajax()` ou `execCommand()` | Análise semântica de APIs proibidas |
-| 13 | Import de `core/modal_factory` (removido no Moodle 5.2) | Requer conhecimento do ciclo de vida do Moodle |
-| 14 | `==` ou `!=` (usar `===` / `!==`) | ESLint opcional |
-| 15 | Strings de UI hardcoded visíveis ao usuário | Rastreamento semântico |
-| 16 | Cadeia `.then()` onde `async/await` é mais claro | Preferência de estilo com impacto de manutenção |
+| # | Regra |
+|---|---|
+| 21 | `var` declarado — usar `const` ou `let` |
+| 22 | `jQuery.ajax()` ou `execCommand()` — proibidos |
+| 23 | Import de `core/modal_factory` — removido no Moodle 5.2; usar `core/modal` |
+| 24 | `==` ou `!=` — usar `===` / `!==` |
+| 25 | Strings de UI hardcoded visíveis ao usuário — usar `core/str` |
+| 26 | Cadeia `.then().then()` onde `async/await` é mais legível |
 
 ### Mustache (`*.mustache`)
 
-| # | Regra | Por que ferramentas automáticas não pegam |
-|---|---|---|
-| 17 | `@template` ausente no segundo bloco `{{! ... }}` | O linter do CI pega, mas só no pipeline |
-| 18 | Heading vazio (`<h1>` a `<h6>` sem conteúdo) | Análise estrutural de HTML |
-| 19 | Classe `sr-only` usada sozinha (conflito com Boost em tabelas e `.activity-item`) | Requer conhecimento do comportamento do tema |
-| 20 | Classe Bootstrap 4 depreciada (`ml-`, `mr-`, `text-right`, `data-dismiss` sem `data-bs-dismiss`) | Requer conhecimento da migração BS4→BS5 |
+| # | Regra |
+|---|---|
+| 27 | `@template` ausente no segundo bloco `{{! ... }}` |
+| 28 | Heading vazio: `<h1>` a `<h6>` sem conteúdo ou variável |
+| 29 | `sr-only` sozinho dentro de `.table` ou `.activity-item` (conflito com Boost) |
+| 30 | Classe Bootstrap 4 depreciada: `ml-*`, `mr-*`, `text-right`, `data-dismiss` sem `data-bs-dismiss` |
+| 31 | Ícone `<i class="fa-...">` sem texto adjacente e sem `aria-hidden="true"` |
+| 32 | `<img>` sem atributo `alt` |
+| 33 | Botão/link com só ícone sem `aria-label` ou `<span class="visually-hidden">` |
+| 34 | `<th>` sem `scope="col"` ou `scope="row"` |
+| 35 | `<input>`, `<select>` ou `<textarea>` sem `<label>` ou `aria-label` |
 
 ### CSS (`*.css`)
 
-| # | Regra | Por que ferramentas automáticas não pegam |
-|---|---|---|
-| 21 | `!important` (proibido; aumentar especificidade em vez disso) | Lint de CSS opcional |
-| 22 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`) | Requer conhecimento do padrão Moodle |
-| 23 | Valor hexadecimal hardcoded sem variável CSS | Rastreamento de uso de tokens de design |
+| # | Regra |
+|---|---|
+| 36 | `!important` — proibido; aumentar especificidade |
+| 37 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`) |
+| 38 | Hex hardcoded fora de `var()` — usar `var(--nome, #fallback)` |
 
 ### XML (`db/*.xml`)
 
-| # | Regra | Por que ferramentas automáticas não pegam |
-|---|---|---|
-| 24 | Nome de tabela (sem `mdl_`) com mais de 53 caracteres | XMLDB editor não valida limites |
-| 25 | Nome de campo com mais de 63 caracteres | XMLDB editor não valida limites |
+| # | Regra |
+|---|---|
+| 39 | Nome de tabela (sem `mdl_`) com mais de 53 caracteres |
+| 40 | Nome de campo com mais de 63 caracteres |
 
 ## Fluxo
 
