@@ -66,11 +66,11 @@ done
 
 LICENSE_FILTER='This file is part of Moodle\|Moodle is free software\|GNU General Public License\|along with Moodle\|see <https://www.gnu.org/licenses\|You should have received a copy\|WITHOUT ANY WARRANTY\|the Free Software Foundation'
 
-# Divide o orçamento de 700 linhas proporcionalmente entre os arquivos.
+# Divide o orçamento de 2000 linhas proporcionalmente entre os arquivos.
 # Garante que todo arquivo seja representado no diff enviado à IA.
 FILE_COUNT=$(echo "$ALL_STAGED" | grep -c .)
-LINES_PER_FILE=$(( 700 / FILE_COUNT ))
-[ "$LINES_PER_FILE" -lt 30 ] && LINES_PER_FILE=30
+LINES_PER_FILE=$(( 2000 / FILE_COUNT ))
+[ "$LINES_PER_FILE" -lt 50 ] && LINES_PER_FILE=50
 
 DIFF=""
 while IFS= read -r FILE; do
