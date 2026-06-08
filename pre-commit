@@ -66,9 +66,21 @@ done
 
 LICENSE_FILTER='This file is part of Moodle\|Moodle is free software\|GNU General Public License\|along with Moodle\|see <https://www.gnu.org/licenses\|You should have received a copy\|WITHOUT ANY WARRANTY\|the Free Software Foundation'
 
-DIFF=$(git diff --cached -- '*.php' '*.js' '*.mustache' '*.css' '*.xml' \
-    | grep -v "$LICENSE_FILTER" \
-    | head -n 700)
+# Divide o orçamento de 700 linhas proporcionalmente entre os arquivos.
+# Garante que todo arquivo seja representado no diff enviado à IA.
+FILE_COUNT=$(echo "$ALL_STAGED" | grep -c .)
+LINES_PER_FILE=$(( 700 / FILE_COUNT ))
+[ "$LINES_PER_FILE" -lt 30 ] && LINES_PER_FILE=30
+
+DIFF=""
+while IFS= read -r FILE; do
+    [ -z "$FILE" ] && continue
+    FILE_DIFF=$(git diff --cached -- "$FILE" \
+        | grep -v "$LICENSE_FILTER" \
+        | head -n "$LINES_PER_FILE")
+    [ -n "$FILE_DIFF" ] && DIFF+="${FILE_DIFF}"$'\n'
+done <<< "$ALL_STAGED"
+
 [ -z "$DIFF" ] && exit 0
 
 PROMPT_FILE=$(mktemp)
