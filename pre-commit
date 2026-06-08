@@ -1,39 +1,45 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS (Moodle standard) + revisão IA paralela nos arquivos PHP staged.
+# Pre-commit: PHPCS (Moodle standard) + revisão IA paralela em PHP, JS, Mustache, CSS e XML.
 
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs"
-STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.php$')
 
-# ------------------------------------------------------------------ #
-#  PHPCS — obrigatório, sem bypass                                    #
-# ------------------------------------------------------------------ #
-if [ -z "$STAGED" ]; then
+ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '\.(php|js|mustache|css|xml)$')
+PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
+
+# Sem arquivos relevantes staged → nada a fazer
+if [ -z "$ALL_STAGED" ]; then
     exit 0
 fi
 
-echo "phpcs: verificando arquivos staged..."
-echo ""
+# ------------------------------------------------------------------ #
+#  PHPCS — somente PHP, obrigatório, sem bypass                       #
+# ------------------------------------------------------------------ #
+if [ -n "$PHP_STAGED" ]; then
+    echo "phpcs: verificando arquivos staged..."
+    echo ""
 
-PHPCS_ERRORS=0
-for FILE in $STAGED; do
-    [ -f "$FILE" ] || continue
-    OUTPUT=$($PHPCS "$FILE" 2>&1)
-    if [ $? -ne 0 ]; then
-        echo "$OUTPUT"
-        echo ""
-        PHPCS_ERRORS=1
+    PHPCS_ERRORS=0
+    while IFS= read -r FILE; do
+        [ -f "$FILE" ] || continue
+        OUTPUT=$($PHPCS "$FILE" 2>&1)
+        if [ $? -ne 0 ]; then
+            echo "$OUTPUT"
+            echo ""
+            PHPCS_ERRORS=1
+        fi
+    done <<< "$PHP_STAGED"
+
+    if [ $PHPCS_ERRORS -ne 0 ]; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: corrija os erros acima antes de commitar."
+        echo "  Dica: phpcbf pode corrigir automaticamente os [x] marcados."
+        echo "--------------------------------------------------------------"
+        exit 1
     fi
-done
 
-if [ $PHPCS_ERRORS -ne 0 ]; then
-    echo "--------------------------------------------------------------"
-    echo "  Commit bloqueado: corrija os erros acima antes de commitar."
-    echo "  Dica: phpcbf pode corrigir automaticamente os [x] marcados."
-    echo "--------------------------------------------------------------"
-    exit 1
+    echo "phpcs: OK"
 fi
-
-echo "phpcs: OK"
 
 # ------------------------------------------------------------------ #
 #  Revisão IA — paralela, pode ser ignorada com SKIP_AI=1            #
@@ -58,25 +64,49 @@ for i in "" 2 3 4 5; do
 done
 [ $HAS_KEY -eq 0 ] && exit 0
 
-DIFF=$(git diff --cached -- '*.php' | head -n 400)
+DIFF=$(git diff --cached -- '*.php' '*.js' '*.mustache' '*.css' '*.xml' | head -n 500)
 [ -z "$DIFF" ] && exit 0
 
 PROMPT_FILE=$(mktemp)
 trap "rm -f $PROMPT_FILE ${RESULT_FILES[*]}" EXIT
 
 cat > "$PROMPT_FILE" << 'RULES'
-Você é um revisor de código Moodle. Analise o diff abaixo verificando APENAS o que o PHPCS não cobre automaticamente:
+Você é um revisor de código Moodle. Analise o diff abaixo verificando APENAS o que ferramentas automáticas não cobrem.
 
-1. PHPDoc: @param com descrição, @return obrigatório se há return, @var em propriedades, tipos corretos (int/bool/string, não Int/Bool/String)
+=== PHP (*.php) ===
+1. PHPDoc: @param sem descrição, @return ausente quando há return, @var ausente em propriedades, tipos errados (use int/bool/string minúsculos)
 2. Strings lang/: chaves novas fora da ordem alfabética estrita
 3. $DB dentro de loops foreach/for/while — antipadrão N+1
 4. echo $var sem s(), format_string() ou format_text()
-5. require_sesskey() ausente em código que processa POST
-6. Texto hardcoded em PHP/Mustache que deveria usar get_string()
+5. require_sesskey() ausente em código que processa $_POST
+6. Texto hardcoded em PHP que deveria usar get_string()
 7. Type hints e return types ausentes em funções/métodos novos
 8. SQL com variáveis concatenadas diretamente (risco de injeção SQL)
 9. require_capability() ou has_capability() ausente antes de ação sensível
 10. defined('MOODLE_INTERNAL') || die() ausente onde obrigatório
+
+=== JavaScript (amd/src/*.js) ===
+11. var declarado — usar const (padrão) ou let (só se reatribuído); var é proibido
+12. jQuery.ajax() ou execCommand() — proibidos no Moodle
+13. Import de core/modal_factory — removido no Moodle 5.2; usar core/modal
+14. == ou != — usar === ou !==
+15. Strings de UI hardcoded visíveis ao usuário — usar core/str
+16. Cadeia de .then() onde async/await seria mais claro
+
+=== Mustache (*.mustache) ===
+17. @template ausente no segundo bloco {{! ... }} do arquivo
+18. Heading vazio: <h1> a <h6> sem conteúdo ou variável
+19. Classe sr-only usada sozinha (conflito com Boost em tabelas e .activity-item)
+20. Classe Bootstrap 4 depreciada: ml-, mr-, text-right, float-left, float-right, data-dismiss sem data-bs-dismiss
+
+=== CSS (*.css) ===
+21. !important — proibido; aumentar especificidade em vez disso
+22. Seletor sem escopo de path-class (.path-* ou body.path-*) — previne vazamento de estilos
+23. Valor hexadecimal hardcoded sem variável CSS — usar var(--nome, #fallback)
+
+=== XML (db/*.xml) ===
+24. Nome de tabela (sem prefixo mdl_) com mais de 53 caracteres
+25. Nome de campo com mais de 63 caracteres
 
 Responda EXATAMENTE neste formato:
 - Se não há problemas: primeira linha "APROVADO" e nada mais

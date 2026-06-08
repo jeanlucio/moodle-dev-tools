@@ -7,30 +7,69 @@ Pre-commit hook para desenvolvimento de plugins Moodle com duas camadas de revis
 
 ## O que a IA revisa
 
+A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de arquivo de um plugin Moodle.
+
+### PHP
+
 | # | Regra | Por que PHPCS não pega |
 |---|---|---|
 | 1 | PHPDoc incompleto (`@param` sem descrição, `@return` ausente, tipos errados) | PHPCS verifica presença, não qualidade |
 | 2 | Strings `lang/` fora de ordem alfabética | Requer leitura semântica do arquivo |
 | 3 | `$DB` dentro de loop — antipadrão N+1 | Análise de fluxo de controle |
 | 4 | `echo $var` sem `s()` / `format_string()` / `format_text()` | Rastreamento de origem da variável |
-| 5 | `require_sesskey()` ausente em código que processa POST | Rastreamento de fluxo HTTP |
+| 5 | `require_sesskey()` ausente em código que processa `$_POST` | Rastreamento de fluxo HTTP |
 | 6 | Texto hardcoded que deveria usar `get_string()` | Detecção semântica de literais |
 | 7 | Type hints e return types ausentes em funções/métodos novos | PHPCS exige só em alguns contextos |
 | 8 | SQL com variáveis concatenadas (risco de injeção) | Análise de interpolação |
 | 9 | `require_capability()` ausente antes de ação sensível | Rastreamento de contexto de permissão |
 | 10 | `defined('MOODLE_INTERNAL') \|\| die()` ausente | Requer contexto do tipo de arquivo |
 
+### JavaScript (`amd/src/*.js`)
+
+| # | Regra | Por que ferramentas automáticas não pegam |
+|---|---|---|
+| 11 | `var` declarado (usar `const` ou `let`) | ESLint opcional, não configurado por padrão |
+| 12 | `jQuery.ajax()` ou `execCommand()` | Análise semântica de APIs proibidas |
+| 13 | Import de `core/modal_factory` (removido no Moodle 5.2) | Requer conhecimento do ciclo de vida do Moodle |
+| 14 | `==` ou `!=` (usar `===` / `!==`) | ESLint opcional |
+| 15 | Strings de UI hardcoded visíveis ao usuário | Rastreamento semântico |
+| 16 | Cadeia `.then()` onde `async/await` é mais claro | Preferência de estilo com impacto de manutenção |
+
+### Mustache (`*.mustache`)
+
+| # | Regra | Por que ferramentas automáticas não pegam |
+|---|---|---|
+| 17 | `@template` ausente no segundo bloco `{{! ... }}` | O linter do CI pega, mas só no pipeline |
+| 18 | Heading vazio (`<h1>` a `<h6>` sem conteúdo) | Análise estrutural de HTML |
+| 19 | Classe `sr-only` usada sozinha (conflito com Boost em tabelas e `.activity-item`) | Requer conhecimento do comportamento do tema |
+| 20 | Classe Bootstrap 4 depreciada (`ml-`, `mr-`, `text-right`, `data-dismiss` sem `data-bs-dismiss`) | Requer conhecimento da migração BS4→BS5 |
+
+### CSS (`*.css`)
+
+| # | Regra | Por que ferramentas automáticas não pegam |
+|---|---|---|
+| 21 | `!important` (proibido; aumentar especificidade em vez disso) | Lint de CSS opcional |
+| 22 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`) | Requer conhecimento do padrão Moodle |
+| 23 | Valor hexadecimal hardcoded sem variável CSS | Rastreamento de uso de tokens de design |
+
+### XML (`db/*.xml`)
+
+| # | Regra | Por que ferramentas automáticas não pegam |
+|---|---|---|
+| 24 | Nome de tabela (sem `mdl_`) com mais de 53 caracteres | XMLDB editor não valida limites |
+| 25 | Nome de campo com mais de 63 caracteres | XMLDB editor não valida limites |
+
 ## Fluxo
 
 ```
 git commit
     │
-    ▼
+    ▼ (só se há .php staged)
 PHPCS (local, ~60ms)
     ├── erros → bloqueia imediatamente
     └── OK
          │
-         ▼
+         ▼ (PHP + JS + Mustache + CSS + XML)
     IAs em paralelo (~5–15s)
     Gemini, Groq, OpenAI-compatible (até 5 slots)
          │
