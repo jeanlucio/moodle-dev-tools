@@ -94,6 +94,21 @@ PHPCS (local, ~60ms)
 
 Se uma IA falhar (rate limit, sem crédito, timeout), é ignorada silenciosamente. O commit só é bloqueado por resposta explícita de BLOQUEADO.
 
+### Cobertura do diff por arquivo
+
+O orçamento de 2000 linhas é distribuído proporcionalmente entre os arquivos staged, garantindo que nenhum arquivo seja ignorado. O cabeçalho GPL é removido do diff antes do envio (já verificado pelo PHPCS).
+
+| Arquivos staged | Linhas por arquivo | Total enviado |
+|---|---|---|
+| 1 | 2000 | 2000 |
+| 5 | 400 | 2000 |
+| 10 | 200 | 2000 |
+| 20 | 100 | 2000 |
+| 40 | 50 (mínimo) | 2000 |
+| 60 | 50 (mínimo) | 3000 |
+
+O mínimo de 50 linhas por arquivo garante que cabeçalho, imports e primeiras declarações — onde a maioria dos problemas ocorre — estejam sempre presentes. Os 2000 linhas representam ~15 000 tokens, bem abaixo do limite de contexto de 128 K de todos os modelos configurados.
+
 ## Pré-requisitos
 
 - PHP 8.x
