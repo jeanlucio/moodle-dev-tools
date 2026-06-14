@@ -252,7 +252,8 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
 ├── phpcs-bootstrap.php     ← fix de compatibilidade PHP 8.3 / phpcsutils
-└── plugins-monitor.py      ← monitor de novos plugins (opcional)
+├── plugins-monitor.py      ← monitor de novos plugins (opcional)
+└── plugins-watch.py        ← monitor de atualizações de plugins específicos (opcional)
 
 ~/.phpcs-ai.env             ← suas chaves de API (chmod 600, nunca commitar)
 ```
@@ -327,3 +328,63 @@ python3 ~/.moodle-dev-tools/plugins-monitor.py
 ```
 
 O log fica em `~/.moodle-plugins-monitor.log`.
+
+---
+
+## Monitor de atualizações em plugins específicos
+
+Script complementar (`plugins-watch.py`) que monitora uma lista configurável de
+plugins e notifica quando uma nova versão é publicada, com resumo PT-BR das mudanças.
+
+### Como funciona
+
+- Consulta `download.moodle.org/api/1.3/pluglist.php` e compara `timelastreleased` de cada plugin monitorado com o estado salvo
+- Para plugins com GitHub Releases: extrai o `body` da release como changelog
+- Para plugins sem GitHub Releases (maioria): busca `CHANGES.md`/`CHANGELOG.md` diretamente no repositório e extrai a seção da versão mais recente
+- Gera resumo PT-BR das mudanças via IA (mesma fallback chain: Gemini → OpenRouter/DeepSeek → OpenRouter/GPT-OSS)
+- Envia notificação Telegram com link para as notas de release e para o Plugin Directory
+
+### Lista de plugins monitorados
+
+A lista fica em `WATCH_PLUGINS` no início do arquivo `plugins-watch.py`.
+Edite após instalar (`~/.moodle-dev-tools/plugins-watch.py`) para adicionar ou remover plugins.
+Use o `component` frankenstyle como identificador (ex: `block_xp`, `format_trail`).
+
+Lista padrão incluída:
+
+| Suite | Componentes |
+|---|---|
+| Level UP XP | `block_xp`, `availability_xp`, `enrol_xp`, `local_xpstore` |
+| Stash | `block_stash`, `availability_stash`, `filter_stash`, `tiny_stash` |
+| Trail | `format_trail` |
+| Moove | `theme_moove` |
+| Learning Map | `mod_learningmap`, `format_learningmap` |
+| Block Game | `block_game`, `availability_game` |
+| Game | `mod_game` |
+| TinyMCE plugins | `tiny_c4l`, `tiny_ai`, `tiny_fontcolor`, `tiny_fontsize`, `tiny_wordimport`, `tiny_multilang2`, `tiny_cloze` |
+| Sharing Cart | `block_sharing_cart` |
+| Completion Progress | `block_completion_progress` |
+
+### Instalação via install.sh
+
+O `install.sh` oferece a instalação separada deste monitor. Se confirmada,
+copia o script e registra o cron às 6h15 (15 minutos após o monitor de novos plugins):
+
+```
+15 6 * * *  python3 ~/.moodle-dev-tools/plugins-watch.py
+```
+
+### Instalação manual
+
+```bash
+cp plugins-watch.py ~/.moodle-dev-tools/
+chmod +x ~/.moodle-dev-tools/plugins-watch.py
+
+# Inicializa o estado com as versões atuais (evita notificar releases antigas)
+python3 ~/.moodle-dev-tools/plugins-watch.py  # roda uma vez para criar o state file
+
+# Registra o cron
+(crontab -l; echo "15 6 * * * /usr/bin/python3 $HOME/.moodle-dev-tools/plugins-watch.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+```
+
+O estado é salvo em `~/.moodle-plugins-watch-state.json`.

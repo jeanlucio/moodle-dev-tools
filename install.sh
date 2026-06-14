@@ -33,15 +33,15 @@ else
     echo "~/.phpcs-ai.env já existe — não foi sobrescrito."
 fi
 
-# Monitor de novos plugins (opcional)
+# Monitores de plugins (opcionais — requerem Telegram configurado em ~/.phpcs-ai.env)
 echo ""
 read -r -p "Instalar monitor de novos plugins Moodle? [s/N] " _reply
 if [[ "$_reply" =~ ^[Ss]$ ]]; then
     cp plugins-monitor.py "$TOOLS_DIR/plugins-monitor.py"
     chmod +x "$TOOLS_DIR/plugins-monitor.py"
 
-    if crontab -l 2>/dev/null | grep -q 'plugins-monitor'; then
-        echo "Cron do monitor já configurado — não alterado."
+    if crontab -l 2>/dev/null | grep -q 'plugins-monitor.py'; then
+        echo "Cron do monitor de novos plugins já configurado — não alterado."
     else
         (crontab -l 2>/dev/null; echo "0 6 * * * /usr/bin/python3 $TOOLS_DIR/plugins-monitor.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
         echo "Cron configurado: execução diária às 6h."
@@ -52,6 +52,24 @@ if [[ "$_reply" =~ ^[Ss]$ ]]; then
         echo "  Preencha TELEGRAM_TOKEN e TELEGRAM_CHAT_ID em ~/.phpcs-ai.env"
         echo "  para ativar as notificações. Veja o README para instruções."
     fi
+fi
+
+echo ""
+read -r -p "Instalar monitor de atualizações de plugins específicos? [s/N] " _reply
+if [[ "$_reply" =~ ^[Ss]$ ]]; then
+    cp plugins-watch.py "$TOOLS_DIR/plugins-watch.py"
+    chmod +x "$TOOLS_DIR/plugins-watch.py"
+
+    if crontab -l 2>/dev/null | grep -q 'plugins-watch.py'; then
+        echo "Cron do monitor de atualizações já configurado — não alterado."
+    else
+        (crontab -l 2>/dev/null; echo "15 6 * * * /usr/bin/python3 $TOOLS_DIR/plugins-watch.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+        echo "Cron configurado: execução diária às 6h15."
+    fi
+
+    echo ""
+    echo "  Edite WATCH_PLUGINS em $TOOLS_DIR/plugins-watch.py para ajustar"
+    echo "  a lista de plugins monitorados."
 fi
 
 echo ""
