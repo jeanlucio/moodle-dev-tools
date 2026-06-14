@@ -1,15 +1,20 @@
 # moodle-dev-tools
 
-Pre-commit hook para desenvolvimento de plugins Moodle com duas camadas de revisão automática antes de cada commit:
+Hooks git para desenvolvimento de plugins Moodle com três camadas de automação:
 
 1. **PHPCS** — padrão Moodle, roda localmente (~60ms), sem custo
 2. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que o PHPCS não detecta
+3. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 
-## O que a IA revisa
+---
 
-A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de arquivo de um plugin Moodle.
+## Hook 1 — pre-commit: PHPCS + revisão IA
 
-### PHP
+### O que a IA revisa
+
+A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de arquivo de um plugin Moodle. Arquivos minificados (`amd/build/`) são ignorados.
+
+#### PHP
 
 | # | Regra |
 |---|---|
@@ -21,7 +26,7 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 6 | Type hints e return types ausentes em funções/métodos novos |
 | 7 | SQL com variáveis concatenadas diretamente (risco de injeção SQL) |
 | 8 | `require_capability()` ausente antes de ação sensível |
-| 9 | `defined('MOODLE_INTERNAL') \|\| die()` ausente onde obrigatório |
+| 9 | `$PAGE->requires->js_call_amd()` com 3º argumento contendo array grande ou dado de `$DB->get_records*()` — usar `data-*` ou `<script type="application/json">` |
 | 10 | Script de entrada sem `require_login()` antes de renderizar HTML |
 | 11 | `unserialize()` com dado externo — usar `unserialize_object()` |
 | 12 | `format_text()` com `['noclean' => true]` — proibido |
@@ -33,7 +38,7 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 18 | String em `lang/pt_br/` com "aluno/alunos" — usar "estudante/estudantes" |
 | 19 | String adicionada em `lang/en/` sem correspondente em `lang/pt_br/` |
 
-### JavaScript (`amd/src/*.js`)
+#### JavaScript (`amd/src/*.js`)
 
 | # | Regra |
 |---|---|
@@ -44,7 +49,7 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 24 | Strings de UI hardcoded visíveis ao usuário — usar `core/str` |
 | 25 | Cadeia `.then().then()` onde `async/await` é mais legível |
 
-### Mustache (`*.mustache`)
+#### Mustache (`*.mustache`)
 
 | # | Regra |
 |---|---|
@@ -58,7 +63,7 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 33 | `<th>` sem `scope="col"` ou `scope="row"` |
 | 34 | `<input>`, `<select>` ou `<textarea>` sem `<label>` ou `aria-label` |
 
-### CSS (`*.css`)
+#### CSS (`*.css`)
 
 | # | Regra |
 |---|---|
@@ -66,14 +71,14 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 36 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`) |
 | 37 | Hex hardcoded fora de `var()` — usar `var(--nome, #fallback)` |
 
-### XML (`db/*.xml`)
+#### XML (`db/*.xml`)
 
 | # | Regra |
 |---|---|
 | 38 | Nome de tabela (sem `mdl_`) com mais de 53 caracteres |
 | 39 | Nome de campo com mais de 63 caracteres |
 
-## Fluxo
+### Fluxo
 
 ```
 git commit
@@ -83,7 +88,7 @@ PHPCS (local, ~60ms)
     ├── erros → bloqueia imediatamente
     └── OK
          │
-         ▼ (PHP + JS + Mustache + CSS + XML)
+         ▼ (PHP + JS + Mustache + CSS + XML, exclui amd/build/)
     IAs em paralelo (~5–15s)
     Gemini, Groq, OpenAI-compatible (até 5 slots)
          │
@@ -91,11 +96,19 @@ PHPCS (local, ~60ms)
          └── todas aprovam → commit acontece
 ```
 
-Se uma IA falhar (rate limit, sem crédito, timeout), é ignorada silenciosamente. O commit só é bloqueado por resposta explícita de BLOQUEADO.
+Se uma IA falhar (rate limit, cota, timeout), o erro é exibido no terminal e ela é ignorada. O commit só é bloqueado por resposta explícita `BLOQUEADO`.
+
+**Pular a revisão IA** (falso positivo confirmado):
+
+```bash
+SKIP_AI=1 git commit -m "mensagem"
+```
+
+O PHPCS não pode ser pulado — é obrigatório.
 
 ### Cobertura do diff por arquivo
 
-O orçamento de 2000 linhas é distribuído proporcionalmente entre os arquivos staged, garantindo que nenhum arquivo seja ignorado. O cabeçalho GPL é removido do diff antes do envio (já verificado pelo PHPCS).
+O orçamento de 2000 linhas é distribuído proporcionalmente entre os arquivos staged. O cabeçalho GPL é removido do diff antes do envio.
 
 | Arquivos staged | Linhas por arquivo | Total enviado |
 |---|---|---|
@@ -106,13 +119,55 @@ O orçamento de 2000 linhas é distribuído proporcionalmente entre os arquivos 
 | 40 | 50 (mínimo) | 2000 |
 | 60 | 50 (mínimo) | 3000 |
 
-O mínimo de 50 linhas por arquivo garante que cabeçalho, imports e primeiras declarações — onde a maioria dos problemas ocorre — estejam sempre presentes. Os 2000 linhas representam ~15 000 tokens, bem abaixo do limite de contexto de 128 K de todos os modelos configurados.
+---
+
+## Hook 2 — prepare-commit-msg: geração de mensagem com IA
+
+Quando você executa `git commit` **sem** `-m`, a IA analisa o diff staged e gera uma mensagem de commit completa. O editor abre pré-preenchido para você revisar e salvar.
+
+### Fluxo
+
+```
+git commit          ← sem -m
+    │
+    ▼
+IA analisa diff staged (~3–8s)
+    │
+    ▼
+Editor abre pré-preenchido com a mensagem gerada
+    │
+    ├── Revise, edite se necessário → salve → commit acontece
+    └── Feche sem salvar → commit é cancelado
+```
+
+`git commit -m "..."`, `--amend`, merge e squash pulam o hook automaticamente.
+
+### Regras aplicadas à mensagem gerada
+
+- **Plugin de terceiro** (caso comum): resumo curto, sem prefixo (`MDL-xxx`, `feat:`, `fix:`)
+- **Contribuição core Moodle**: `MDL-12345 COMPONENT: resumo` — só quando o diff claramente aponta para core
+- Linha 1: máximo 72 caracteres, sem ponto final
+- Linha 2: sempre em branco
+- Linha 3+: explica o **porquê** da mudança (o diff já mostra o quê)
+- Narrativa limpa: sem mencionar ciclos de revisão ou bugs encontrados durante o desenvolvimento
+- Sem atribuição de IA (`Co-authored-by`, `Signed-off-by`)
+- Sempre em inglês
+
+### Ordem dos providers
+
+A IA tenta os providers em sequência, usando o primeiro que responder:
+
+1. Groq (mais rápido)
+2. Slots OpenAI-compatible (`OPENAI_*` a `OPENAI5_*`)
+3. Gemini (fallback — sujeito a cota)
+
+---
 
 ## Pré-requisitos
 
 - PHP 8.x
 - [PHPCS](https://github.com/squizlabs/PHP_CodeSniffer) instalado globalmente (`/usr/local/bin/phpcs`)
-- [moodle-cs](https://github.com/moodlehq/moodle-cs) configurado como padrão padrão do PHPCS
+- [moodle-cs](https://github.com/moodlehq/moodle-cs) configurado como padrão do PHPCS
 - Python 3 (biblioteca padrão apenas, sem dependências externas)
 - Ao menos uma chave de API de IA configurada
 
@@ -144,7 +199,7 @@ bash install.sh
 
 O script:
 - Copia `phpcs-ai-call.py` e `phpcs-bootstrap.php` para `~/.moodle-dev-tools/`
-- Instala o hook em `~/.githooks/pre-commit`
+- Cria symlinks em `~/.githooks/` para `pre-commit` e `prepare-commit-msg`
 - Configura `git config --global core.hooksPath ~/.githooks`
 - Cria `~/.phpcs-ai.env` a partir do template (se ainda não existir)
 
@@ -179,27 +234,16 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 | OpenRouter | `openai/gpt-oss-120b:free` | Formato de resposta excelente |
 | NVIDIA NIM | `meta/llama-3.3-70b-instruct` | Gratuito com conta NVIDIA |
 
-## Uso
-
-O hook roda automaticamente a cada `git commit`. Nenhuma ação necessária.
-
-**Pular a revisão IA** (falso positivo confirmado):
-
-```bash
-SKIP_AI=1 git commit -m "mensagem"
-```
-
-O PHPCS não pode ser pulado — é obrigatório.
-
 ## Estrutura dos arquivos instalados
 
 ```
 ~/.githooks/
-└── pre-commit          ← hook git global
+├── pre-commit              ← symlink → revisão PHPCS + IA a cada commit
+└── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
 
 ~/.moodle-dev-tools/
-├── phpcs-ai-call.py    ← caller Python (Gemini + OpenAI-compatible)
-└── phpcs-bootstrap.php ← fix de compatibilidade PHP 8.3 / phpcsutils
+├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
+└── phpcs-bootstrap.php     ← fix de compatibilidade PHP 8.3 / phpcsutils
 
-~/.phpcs-ai.env         ← suas chaves de API (chmod 600, nunca commitar)
+~/.phpcs-ai.env             ← suas chaves de API (chmod 600, nunca commitar)
 ```
