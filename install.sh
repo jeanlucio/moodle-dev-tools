@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala o pre-commit hook de PHPCS + IA para desenvolvimento Moodle.
+# Instala o pre-commit hook de PHPCS + IA e o monitor de plugins para Moodle.
 
 set -e
 
@@ -31,6 +31,27 @@ if [ ! -f "$HOME/.phpcs-ai.env" ]; then
     echo "Edite-o e preencha ao menos uma chave de API para ativar a revisão IA."
 else
     echo "~/.phpcs-ai.env já existe — não foi sobrescrito."
+fi
+
+# Monitor de novos plugins (opcional)
+echo ""
+read -r -p "Instalar monitor de novos plugins Moodle? [s/N] " _reply
+if [[ "$_reply" =~ ^[Ss]$ ]]; then
+    cp plugins-monitor.py "$TOOLS_DIR/plugins-monitor.py"
+    chmod +x "$TOOLS_DIR/plugins-monitor.py"
+
+    if crontab -l 2>/dev/null | grep -q 'plugins-monitor'; then
+        echo "Cron do monitor já configurado — não alterado."
+    else
+        (crontab -l 2>/dev/null; echo "0 6 * * * /usr/bin/python3 $TOOLS_DIR/plugins-monitor.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+        echo "Cron configurado: execução diária às 6h."
+    fi
+
+    if ! grep -q 'TELEGRAM_TOKEN=.' "$HOME/.phpcs-ai.env" 2>/dev/null; then
+        echo ""
+        echo "  Preencha TELEGRAM_TOKEN e TELEGRAM_CHAT_ID em ~/.phpcs-ai.env"
+        echo "  para ativar as notificações. Veja o README para instruções."
+    fi
 fi
 
 echo ""

@@ -1,10 +1,11 @@
 # moodle-dev-tools
 
-Hooks git para desenvolvimento de plugins Moodle com três camadas de automação:
+Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 1. **PHPCS** — padrão Moodle, roda localmente (~60ms), sem custo
 2. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que o PHPCS não detecta
 3. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
+4. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -208,6 +209,7 @@ O script:
 - Cria symlinks em `~/.githooks/` para `pre-commit` e `prepare-commit-msg`
 - Configura `git config --global core.hooksPath ~/.githooks`
 - Cria `~/.phpcs-ai.env` a partir do template (se ainda não existir)
+- Pergunta se deseja instalar o monitor de plugins (opcional)
 
 ## Configuração das chaves de API
 
@@ -249,7 +251,79 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
-└── phpcs-bootstrap.php     ← fix de compatibilidade PHP 8.3 / phpcsutils
+├── phpcs-bootstrap.php     ← fix de compatibilidade PHP 8.3 / phpcsutils
+└── plugins-monitor.py      ← monitor de novos plugins (opcional)
 
 ~/.phpcs-ai.env             ← suas chaves de API (chmod 600, nunca commitar)
 ```
+
+---
+
+## Monitor de novos plugins Moodle
+
+Script que roda uma vez por dia via cron, detecta plugins recém-publicados no
+[Moodle Plugin Directory](https://moodle.org/plugins/) e envia um resumo em
+português brasileiro via Telegram.
+
+### Como funciona
+
+- Consulta a API pública `download.moodle.org/api/1.3/pluglist.php` (sem bloqueio de bot)
+- Detecta novidades pelo ID auto-incremental dos plugins
+- Busca a descrição no repositório GitHub do plugin via GitHub API
+- Gera o resumo em PT-BR com fallback chain de IAs: Gemini → OpenRouter/DeepSeek → OpenRouter/GPT-OSS
+- Envia a notificação via Telegram
+
+### Pré-requisitos
+
+- Python 3 (biblioteca padrão apenas, sem dependências extras)
+- Um bot do Telegram (criado via [@BotFather](https://t.me/BotFather))
+- Ao menos uma chave de API de IA configurada em `~/.phpcs-ai.env`
+
+### Configurar o bot Telegram
+
+**1. Crie o bot:**
+
+Abra uma conversa com [@BotFather](https://t.me/BotFather), envie `/newbot` e siga
+as instruções. Copie o token gerado (formato `123456789:AAFxxx...`).
+
+**2. Descubra seu chat ID:**
+
+Envie qualquer mensagem ao bot e acesse no browser:
+```
+https://api.telegram.org/bot<SEU_TOKEN>/getUpdates
+```
+Procure o campo `"id"` dentro de `"chat"` no JSON retornado.
+
+**3. Preencha `~/.phpcs-ai.env`:**
+
+```bash
+TELEGRAM_TOKEN=123456789:AAFxxx...
+TELEGRAM_CHAT_ID=987654321
+```
+
+### Instalação via install.sh
+
+O `install.sh` pergunta durante a instalação se deseja ativar o monitor.
+Se confirmar, ele copia o script para `~/.moodle-dev-tools/` e registra o cron:
+
+```
+0 6 * * *  python3 ~/.moodle-dev-tools/plugins-monitor.py
+```
+
+### Instalação manual
+
+```bash
+cp plugins-monitor.py ~/.moodle-dev-tools/
+chmod +x ~/.moodle-dev-tools/plugins-monitor.py
+
+# Registra o cron (execução diária às 6h)
+(crontab -l; echo "0 6 * * * /usr/bin/python3 $HOME/.moodle-dev-tools/plugins-monitor.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+```
+
+### Teste
+
+```bash
+python3 ~/.moodle-dev-tools/plugins-monitor.py
+```
+
+O log fica em `~/.moodle-plugins-monitor.log`.
