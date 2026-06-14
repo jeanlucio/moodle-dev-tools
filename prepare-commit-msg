@@ -36,15 +36,30 @@ PROMPT_FILE=$(mktemp)
 trap "rm -f $PROMPT_FILE" EXIT
 
 cat > "$PROMPT_FILE" << 'RULES'
-Generate a git commit message for the diff below. This is a third-party Moodle plugin repository.
+Generate a git commit message for the diff below.
 
-Rules:
-- Line 1: short summary, maximum 72 characters, no trailing period, no prefix (no MDL-xxx, no feat/fix)
-- Line 2: blank
-- Line 3+: body explaining WHY the change was made (not what — the diff already shows that). Be specific: name the files, functions or behaviour that changed. Use complete sentences.
-- English only. Factual tone.
-- Do NOT add Co-authored-by, Signed-off-by or any AI attribution lines.
-- Do NOT wrap output in markdown or code fences.
+=== Format ===
+Third-party Moodle plugin (no tracker issue — the common case):
+  Line 1: short summary only, max 72 characters, no trailing period, no prefix (no MDL-xxx, no feat:/fix: prefix)
+  Example: "add CI matrix for Moodle 5.x"
+
+Moodle core contribution (only when the diff clearly targets core and an MDL issue is referenced):
+  Line 1: MDL-12345 COMPONENT: short summary, max 72 characters
+  Example: "MDL-12345 mod_assign: fix XP display in mobile view"
+
+Line 2: always blank.
+Line 3+: body paragraph(s) explaining WHY the change was made. The diff already shows what changed — focus on the motivation, constraint or problem being solved. Be specific: name the files, functions or behaviour affected. Use complete sentences.
+
+=== Story rules ===
+- Tell a clean story as if the code were written perfectly the first time.
+- Do not mention bugs found and fixed during development before integration.
+- Do not describe multiple separate revision rounds on the same lines.
+- Do not split logically atomic changes into separate bullets.
+
+=== Hard rules ===
+- English only. Factual tone. Past tense implied.
+- Do NOT add Co-authored-by, Signed-off-by or any AI attribution line.
+- Do NOT wrap the output in markdown, code fences or any other formatting.
 - Respond with ONLY the commit message text.
 
 Diff:
