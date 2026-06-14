@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# prepare-commit-msg: generates a commit message from the staged diff using AI.
+# Runs only when 'git commit' is called without -m (COMMIT_SOURCE is empty).
+# The editor opens pre-filled — review, edit if needed, then save.
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+
+# Skip for amend, merge, squash, template, or when -m was given.
+[ -n "$COMMIT_SOURCE" ] && exit 0
+
+[ -f ~/.phpcs-ai.env ] && source ~/.phpcs-ai.env
+
+GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL="${GROQ_MODEL:-llama-3.3-70b-versatile}"
+
+HAS_KEY=0
+[ -n "$GROQ_KEY" ] && HAS_KEY=1
+[ -n "$GEMINI_KEY" ] && HAS_KEY=1
+for i in "" 2 3 4 5; do
+    KEY_VAR="OPENAI${i}_KEY"
+    [ -n "${!KEY_VAR}" ] && HAS_KEY=1
+done
+[ $HAS_KEY -eq 0 ] && exit 0
+
+LICENSE_FILTER='This file is part of Moodle\|Moodle is free software\|GNU General Public License\|along with Moodle\|see <https://www.gnu.org/licenses\|You should have received a copy\|WITHOUT ANY WARRANTY\|the Free Software Foundation'
+
+DIFF=$(git diff --cached \
+    | grep -v "$LICENSE_FILTER" \
+    | grep -v 'amd/build/' \
+    | head -n 3000)
+
+[ -z "$DIFF" ] && exit 0
+
+PROMPT_FILE=$(mktemp)
+trap "rm -f $PROMPT_FILE" EXIT
+
+cat > "$PROMPT_FILE" << 'RULES'
+Generate a git commit message for the diff below. This is a third-party Moodle plugin repository.
+
+Rules:
+- Line 1: short summary, maximum 72 characters, no trailing period, no prefix (no MDL-xxx, no feat/fix)
+- Line 2: blank
+- Line 3+: body explaining WHY the change was made (not what — the diff already shows that). Be specific: name the files, functions or behaviour that changed. Use complete sentences.
+- English only. Factual tone.
+- Do NOT add Co-authored-by, Signed-off-by or any AI attribution lines.
+- Do NOT wrap output in markdown or code fences.
+- Respond with ONLY the commit message text.
+
+Diff:
+RULES
+
+echo "$DIFF" >> "$PROMPT_FILE"
+
+call_ai() {
+    python3 "$HOME/.moodle-dev-tools/phpcs-ai-call.py" "$@" < "$PROMPT_FILE" 2>/dev/null
+}
+
+echo "IA: gerando mensagem de commit..." >&2
+
+RESULT=""
+
+# Try providers in order of speed: Groq → OpenAI-compatible slots → Gemini
+[ -z "$RESULT" ] && [ -n "$GROQ_KEY" ] && \
+    RESULT=$(call_ai "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL")
+
+for i in "" 2 3 4 5; do
+    [ -n "$RESULT" ] && break
+    KEY_VAR="OPENAI${i}_KEY"
+    URL_VAR="OPENAI${i}_URL"
+    MODEL_VAR="OPENAI${i}_MODEL"
+    KEY="${!KEY_VAR}"
+    [ -n "$KEY" ] && RESULT=$(call_ai "openai" "$KEY" "${!URL_VAR}" "${!MODEL_VAR}")
+done
+
+[ -z "$RESULT" ] && [ -n "$GEMINI_KEY" ] && \
+    RESULT=$(call_ai "gemini" "$GEMINI_KEY")
+
+if [ -z "$RESULT" ]; then
+    echo "IA: sem resposta — escreva a mensagem manualmente." >&2
+    exit 0
+fi
+
+echo "$RESULT" > "$COMMIT_MSG_FILE"
+echo "IA: OK — revise a mensagem no editor." >&2

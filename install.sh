@@ -14,9 +14,10 @@ cp phpcs-ai-call.py "$TOOLS_DIR/phpcs-ai-call.py"
 cp phpcs-bootstrap.php "$TOOLS_DIR/phpcs-bootstrap.php"
 chmod +x "$TOOLS_DIR/phpcs-ai-call.py"
 
-# Instala o hook global como symlink (edições no repo entram em vigor imediatamente)
+# Instala os hooks globais como symlinks (edições no repo entram em vigor imediatamente)
 mkdir -p "$HOOKS_DIR"
-ln -sf "$(pwd)/pre-commit" "$HOOKS_DIR/pre-commit"
+ln -sf "$(pwd)/pre-commit"          "$HOOKS_DIR/pre-commit"
+ln -sf "$(pwd)/prepare-commit-msg"  "$HOOKS_DIR/prepare-commit-msg"
 
 # Configura o git globalmente
 git config --global core.hooksPath "$HOOKS_DIR"
