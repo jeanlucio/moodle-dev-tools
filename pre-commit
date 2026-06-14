@@ -4,7 +4,8 @@
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs"
 
 ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
-    | grep -E '\.(php|js|mustache|css|xml)$')
+    | grep -E '\.(php|js|mustache|css|xml)$' \
+    | grep -v 'amd/build/')
 PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
 
 # Sem arquivos relevantes staged → nada a fazer
