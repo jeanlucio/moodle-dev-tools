@@ -93,7 +93,13 @@ PHPCS (local, ~60ms)
     Gemini, Groq, OpenAI-compatible (até 5 slots)
          │
          ├── qualquer uma retorna BLOQUEADO → bloqueia com relatório
-         └── todas aprovam → commit acontece
+         └── todas aprovam
+              │
+              ▼ (opcional — só quando sem -m)
+         IA gera mensagem de commit (~3–8s)
+              │
+              ▼
+         Editor abre pré-preenchido → revise e salve → commit acontece
 ```
 
 Se uma IA falhar (rate limit, cota, timeout), o erro é exibido no terminal e ela é ignorada. O commit só é bloqueado por resposta explícita `BLOQUEADO`.
