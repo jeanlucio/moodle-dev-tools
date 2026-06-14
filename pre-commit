@@ -153,20 +153,23 @@ echo "IA: analisando diff..."
 
 PIDS=()
 RESULT_FILES=()
+STDERR_FILES=()
 PROVIDERS=()
 
 start_provider() {
     local provider="$1"; shift
-    local result
+    local result stderr_file
     result=$(mktemp)
+    stderr_file=$(mktemp)
     RESULT_FILES+=("$result")
+    STDERR_FILES+=("$stderr_file")
     PROVIDERS+=("$provider")
-    python3 "$HOME/.moodle-dev-tools/phpcs-ai-call.py" "$@" < "$PROMPT_FILE" > "$result" 2>/dev/null &
+    python3 "$HOME/.moodle-dev-tools/phpcs-ai-call.py" "$@" < "$PROMPT_FILE" > "$result" 2>"$stderr_file" &
     PIDS+=($!)
 }
 
-[ -n "$GEMINI_KEY" ] && start_provider "Gemini" "gemini" "$GEMINI_KEY"
-[ -n "$GROQ_KEY"   ] && start_provider "Groq"   "groq"   "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL"
+[ -n "$GEMINI_KEY" ] && start_provider "Gemini / gemini-2.0-flash" "gemini" "$GEMINI_KEY"
+[ -n "$GROQ_KEY"   ] && start_provider "Groq / ${GROQ_MODEL}" "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL"
 
 for i in "" 2 3 4 5; do
     KEY_VAR="OPENAI${i}_KEY"
@@ -175,7 +178,7 @@ for i in "" 2 3 4 5; do
     KEY="${!KEY_VAR}"
     URL="${!URL_VAR}"
     MODEL="${!MODEL_VAR}"
-    [ -n "$KEY" ] && start_provider "OpenAI${i}" "openai" "$KEY" "$URL" "$MODEL"
+    [ -n "$KEY" ] && start_provider "${MODEL:-OpenAI${i}}" "openai" "$KEY" "$URL" "$MODEL"
 done
 
 for PID in "${PIDS[@]}"; do
@@ -185,7 +188,12 @@ done
 AI_BLOCKED=0
 for i in "${!RESULT_FILES[@]}"; do
     RESPONSE=$(cat "${RESULT_FILES[$i]}")
-    [ -z "$RESPONSE" ] && continue
+
+    if [ -z "$RESPONSE" ]; then
+        ERR=$(head -1 "${STDERR_FILES[$i]}")
+        [ -n "$ERR" ] && echo "[${PROVIDERS[$i]}] falhou: $ERR"
+        continue
+    fi
 
     FIRST=$(echo "$RESPONSE" | head -n 1 | tr -dc 'A-Z')
     if [ "$FIRST" = "BLOQUEADO" ]; then
