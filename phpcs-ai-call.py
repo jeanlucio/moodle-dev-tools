@@ -2,9 +2,7 @@
 # AI API caller for the pre-commit hook.
 # Usage: python3 phpcs-ai-call.py <provider> <key> [url] [model] < prompt.txt
 import json
-import re
 import sys
-import time
 import urllib.error
 import urllib.request
 
@@ -19,20 +17,6 @@ def _http_error_message(e):
         return str(e)
 
 
-def _retry_delay(e, msg):
-    """Return seconds to wait before retrying a 429, or None to not retry."""
-    header = e.headers.get('Retry-After') if e.headers else None
-    if header:
-        try:
-            return float(header)
-        except ValueError:
-            pass
-    m = re.search(r'retry in (\d+(?:\.\d+)?)s', msg)
-    if m:
-        return float(m.group(1)) + 1
-    return 30
-
-
 def call_gemini(key, prompt):
     url = (
         'https://generativelanguage.googleapis.com/v1beta/models'
@@ -42,29 +26,18 @@ def call_gemini(key, prompt):
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 1024},
     }).encode()
-
-    for attempt in range(2):
-        req = urllib.request.Request(
-            url, data=payload,
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.load(r)
-                return data['candidates'][0]['content']['parts'][0]['text']
-        except urllib.error.HTTPError as e:
-            msg = _http_error_message(e)
-            if e.code == 429 and attempt == 0:
-                delay = _retry_delay(e, msg)
-                if delay <= 65:
-                    print(f'Gemini: rate limit, retrying in {delay:.0f}s...', file=sys.stderr)
-                    time.sleep(delay)
-                    continue
-            first_line = msg.split('\n')[0]
-            raise RuntimeError(f'HTTP {e.code}: {first_line}')
-
-    raise RuntimeError('Gemini: rate limit persists after retry')
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.load(r)
+            return data['candidates'][0]['content']['parts'][0]['text']
+    except urllib.error.HTTPError as e:
+        first_line = _http_error_message(e).split('\n')[0]
+        raise RuntimeError(f'HTTP {e.code}: {first_line}')
 
 
 def call_openai(url, key, model, prompt):
