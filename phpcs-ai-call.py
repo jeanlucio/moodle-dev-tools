@@ -2,27 +2,69 @@
 # AI API caller for the pre-commit hook.
 # Usage: python3 phpcs-ai-call.py <provider> <key> [url] [model] < prompt.txt
 import json
+import re
 import sys
+import time
+import urllib.error
 import urllib.request
+
+
+def _http_error_message(e):
+    """Extract the meaningful error message from an HTTPError response body."""
+    try:
+        body = e.read().decode('utf-8', errors='replace')
+        data = json.loads(body)
+        return data.get('error', {}).get('message') or body[:400]
+    except Exception:
+        return str(e)
+
+
+def _retry_delay(e, msg):
+    """Return seconds to wait before retrying a 429, or None to not retry."""
+    header = e.headers.get('Retry-After') if e.headers else None
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    m = re.search(r'retry in (\d+(?:\.\d+)?)s', msg)
+    if m:
+        return float(m.group(1)) + 1
+    return 30
 
 
 def call_gemini(key, prompt):
     url = (
         'https://generativelanguage.googleapis.com/v1beta/models'
-        f'/gemini-2.0-flash:generateContent?key={key}'
+        f'/gemini-flash-latest:generateContent?key={key}'
     )
-    body = json.dumps({
+    payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 1024},
     }).encode()
-    req = urllib.request.Request(
-        url, data=body,
-        headers={'Content-Type': 'application/json', 'User-Agent': 'curl/7.88.1'},
-        method='POST'
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.load(r)
-        return data['candidates'][0]['content']['parts'][0]['text']
+
+    for attempt in range(2):
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.load(r)
+                return data['candidates'][0]['content']['parts'][0]['text']
+        except urllib.error.HTTPError as e:
+            msg = _http_error_message(e)
+            if e.code == 429 and attempt == 0:
+                delay = _retry_delay(e, msg)
+                if delay <= 65:
+                    print(f'Gemini: rate limit, retrying in {delay:.0f}s...', file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+            first_line = msg.split('\n')[0]
+            raise RuntimeError(f'HTTP {e.code}: {first_line}')
+
+    raise RuntimeError('Gemini: rate limit persists after retry')
 
 
 def call_openai(url, key, model, prompt):
@@ -35,12 +77,16 @@ def call_openai(url, key, model, prompt):
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {key}',
-        'User-Agent': 'curl/7.88.1',
     }
     req = urllib.request.Request(url, data=body, headers=headers, method='POST')
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.load(r)
-        return data['choices'][0]['message']['content']
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.load(r)
+            return data['choices'][0]['message']['content']
+    except urllib.error.HTTPError as e:
+        msg = _http_error_message(e)
+        first_line = msg.split('\n')[0]
+        raise RuntimeError(f'HTTP {e.code}: {first_line}')
 
 
 def main():
