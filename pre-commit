@@ -200,6 +200,8 @@ for i in "${!RESULT_FILES[@]}"; do
         echo ""
         echo "[${PROVIDERS[$i]}] $RESPONSE"
         AI_BLOCKED=1
+    else
+        echo "[${PROVIDERS[$i]}] OK"
     fi
 done
 
