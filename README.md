@@ -260,6 +260,45 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 ---
 
+## Ferramentas de manutenção de código
+
+### sortlang.php — ordenação de strings de idioma
+
+Ordena as chaves `$string[]` em ordem alfabética em todos os arquivos PHP dentro
+de `lang/`. Aplica também a remoção de linhas em branco extras.
+
+```bash
+php sortlang.php <caminho_do_plugin>
+```
+
+**Limitação:** arquivos com valores de string multilinha são ignorados com aviso.
+Moodle core possui strings multilinha por legado, mas arquivos de lang de plugins
+não devem tê-las — conteúdo longo pertence a templates Mustache. Se um arquivo
+for ignorado, corrija o valor multilinha primeiro.
+
+### addheader.php — injeção do cabeçalho GPL
+
+Adiciona o cabeçalho de licença GPL em todos os arquivos PHP, JS, CSS, SCSS e
+Mustache que ainda não o possuem. O nome do pacote Frankenstyle é inferido
+automaticamente a partir do caminho do plugin.
+
+```bash
+php addheader.php <caminho_do_plugin>
+```
+
+Formatos gerados:
+
+| Tipo | Formato |
+|---|---|
+| PHP / JS | Bloco `//` estilo Moodle |
+| CSS / SCSS | Dual `/** */` — GPL + JSDoc com `@package` |
+| Mustache | Bloco `{{! ... }}` |
+
+Arquivos em `amd/build/`, `yui/build/`, `vendor/` e arquivos `.min.*` são
+ignorados automaticamente.
+
+---
+
 ## Monitor de novos plugins Moodle
 
 Script que roda uma vez por dia via cron, detecta plugins recém-publicados no
