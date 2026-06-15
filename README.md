@@ -311,6 +311,9 @@ Se confirmar, ele copia o script para `~/.moodle-dev-tools/` e registra o cron:
 0 6 * * *  python3 ~/.moodle-dev-tools/plugins-monitor.py
 ```
 
+> **Fuso horário:** o cron usa o horário do servidor. Se ele estiver em UTC e você quiser
+> receber às 6h no Brasil (UTC-3), ajuste para `0 9 * * *`.
+
 ### Instalação manual
 
 ```bash
@@ -373,6 +376,8 @@ copia o script e registra o cron às 6h15 (15 minutos após o monitor de novos p
 ```
 15 6 * * *  python3 ~/.moodle-dev-tools/plugins-watch.py
 ```
+
+> **Fuso horário:** mesma observação acima — ajuste para `15 9 * * *` em servidores UTC.
 
 ### Instalação manual
 
