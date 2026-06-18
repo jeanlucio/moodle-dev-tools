@@ -79,6 +79,12 @@ A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de ar
 | 38 | Nome de tabela (sem `mdl_`) com mais de 53 caracteres |
 | 39 | Nome de campo com mais de 63 caracteres |
 
+#### Todos os tipos de arquivo
+
+| # | Regra |
+|---|---|
+| 40 | Comentário escrito em português em qualquer arquivo (`// ...`, `/* ... */`, `{{! ... }}`) — todos os comentários devem estar em inglês; sinalizado apenas quando for claramente prosa em português, não palavras isoladas ou nomes próprios |
+
 ### Fluxo
 
 ```
