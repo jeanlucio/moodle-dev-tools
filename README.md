@@ -109,7 +109,7 @@ PHPCS (local, ~60ms)
          Editor abre pré-preenchido → revise e salve → commit acontece
 ```
 
-Se uma IA falhar (rate limit, cota, timeout), o erro é exibido no terminal e ela é ignorada. O commit só é bloqueado por resposta explícita `BLOQUEADO`.
+Se uma IA falhar (rate limit, cota, timeout) **ou retornar fora do formato** (1ª linha não é `APROVADO` nem `BLOQUEADO` — o modelo se perdeu na tarefa), o problema é exibido no terminal e ela é ignorada, nunca contada como aprovação. O commit só é bloqueado por resposta explícita `BLOQUEADO`.
 
 **Pular a revisão IA** (falso positivo confirmado):
 

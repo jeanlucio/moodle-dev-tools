@@ -198,13 +198,18 @@ for i in "${!RESULT_FILES[@]}"; do
         continue
     fi
 
-    FIRST=$(echo "$RESPONSE" | head -n 1 | tr -dc 'A-Z')
+    FIRST=$(echo "$RESPONSE" | grep -v '^[[:space:]]*$' | head -n 1 | tr -dc 'A-Z')
     if [ "$FIRST" = "BLOQUEADO" ]; then
         echo ""
         echo "[${PROVIDERS[$i]}] $RESPONSE"
         AI_BLOCKED=1
-    else
+    elif [ "$FIRST" = "APROVADO" ]; then
         echo "[${PROVIDERS[$i]}] OK"
+    else
+        # Primeira linha não é APROVADO nem BLOQUEADO: o modelo se perdeu na
+        # tarefa ou devolveu lixo. Trata como falha do provider (exibida e
+        # ignorada), nunca como aprovação silenciosa.
+        echo "[${PROVIDERS[$i]}] resposta ignorada (fora do formato): $(echo "$RESPONSE" | grep -v '^[[:space:]]*$' | head -n 1)"
     fi
 done
 
