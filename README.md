@@ -7,7 +7,8 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 3. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que as ferramentas não detectam
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
-6. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
+7. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -294,7 +295,8 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 └── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
 
 ~/.local/bin/
-└── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
+├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
+└── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -340,6 +342,36 @@ caminho do host (`html/public/blocks/playerhud`); o prefixo é removido.
   A medição completa mesmo quando a suíte reporta warnings/deprecations inofensivas (ex.:
   doc-comment metadata em plugins 4.5+5.0); uma nota final separa "medição-ok-com-avisos" de
   falha real de teste.
+
+---
+
+## Validação de schema — `moodle-check-schema`
+
+Valida o schema físico do banco contra os `install.xml` e mostra **só as divergências dos seus
+plugins** (filtra o ruído do core e de plugins de terceiros). Roda o
+`admin/cli/check_database_schema.php` nativo do Moodle dentro do container de dev — onde o site
+de produção (`mdl_`) está instalado.
+
+```bash
+moodle-check-schema [target] [--all]
+```
+
+| Argumento | Efeito |
+|---|---|
+| (nenhum) | web-1 (Moodle 5.1), só os seus plugins |
+| `45` / `52` | web45 / web52 |
+| `all` | os três containers |
+| `--all` | mostra **todas** as divergências (core e terceiros), não só as suas |
+
+Serve para pegar **drift do banco de desenvolvimento**: quando o `install.xml` evolui e o banco
+local não acompanha (faltou reinstalar o plugin ou um passo de `upgrade.php`). Os prefixos de
+tabela dos seus plugins são derivados automaticamente dos diretórios com repositório `.git`.
+Sai com código 1 se houver divergência (serve de gate antes de publicar).
+
+> **Por que não no CI:** o `moodle-plugin-ci` só prepara os ambientes de teste (`phpu_`/`bht_`)
+> e nunca instala o site `mdl_`, então `check_database_schema.php` aborta com "Database is not
+> yet installed". É, por construção, uma ferramenta local — e é por isso que o template oficial
+> do Moodle HQ não a inclui.
 
 ---
 
