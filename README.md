@@ -3,13 +3,39 @@
 Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 1. **PHPCS** — padrão Moodle, roda localmente (~60ms), sem custo
-2. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que o PHPCS não detecta
-3. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
-4. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+2. **ESLint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS e templates)
+3. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que as ferramentas não detectam
+4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
+5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
+6. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
-## Hook 1 — pre-commit: PHPCS + revisão IA
+## Hook 1 — pre-commit: PHPCS + ESLint + Mustache + revisão IA
+
+O hook roda em quatro etapas. As três primeiras são **gates determinísticos** (ferramentas
+locais, sem custo, sem IA); a quarta é a revisão IA. Cada gate só roda se houver arquivo do
+seu tipo no staging — um commit que mexe só em PHP não dispara ESLint nem o lint Mustache.
+
+### Gates determinísticos (PHPCS, ESLint, Mustache)
+
+| Gate | Dispara com | O que faz | Bloqueia? |
+|---|---|---|---|
+| **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
+| **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
+| **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
+| **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
+
+Notas:
+
+- **ESLint** usa o binário e a config do Moodle (`.eslintrc`), localizados subindo a árvore a
+  partir do repositório. Se o plugin não estiver montado sob uma árvore Moodle (sem `eslint`
+  acessível), o lint JS é **pulado sem bloquear** — o hook é global e não pode quebrar commits
+  de repositórios fora do ecossistema Moodle.
+- **Mustache** faz um check leve, não o validador completo do `moodle-plugin-ci` (que valida
+  HTML e contexto de exemplo). O `@template` ausente é o erro que mais quebra o CI; é o que o
+  gate garante. A validação de HTML/contexto continua a cargo do CI.
+- Os gates determinísticos **não podem ser pulados** — só a revisão IA aceita `SKIP_AI=1`.
 
 ### O que a IA revisa
 
@@ -92,8 +118,18 @@ git commit
     │
     ▼ (só se há .php staged)
 PHPCS (local, ~60ms)
-    ├── erros → bloqueia imediatamente
+    ├── erros → bloqueia
     └── OK
+         │
+         ▼ (só se há .js staged)
+    ESLint (local, --max-warnings 0)  +  aviso de build AMD dessincronizado
+    │    ├── erros → bloqueia
+    │    └── OK
+         │
+         ▼ (só se há .mustache staged)
+    Mustache (local: @template obrigatório)
+    │    ├── @template ausente → bloqueia
+    │    └── OK
          │
          ▼ (PHP + JS + Mustache + CSS + XML, exclui amd/build/)
     IAs em paralelo (~5–15s)
@@ -117,7 +153,8 @@ Se uma IA falhar (rate limit, cota, timeout) **ou retornar fora do formato** (1�
 SKIP_AI=1 git commit -m "mensagem"
 ```
 
-O PHPCS não pode ser pulado — é obrigatório.
+Os gates determinísticos (PHPCS, ESLint, Mustache) não podem ser pulados — `SKIP_AI=1` afeta
+apenas a revisão IA.
 
 ### Cobertura do diff por arquivo
 
@@ -213,6 +250,7 @@ bash install.sh
 O script:
 - Copia `phpcs-ai-call.py` e `phpcs-bootstrap.php` para `~/.moodle-dev-tools/`
 - Cria symlinks em `~/.githooks/` para `pre-commit` e `prepare-commit-msg`
+- Cria o symlink `~/.local/bin/moodle-coverage` → `coverage.sh`
 - Configura `git config --global core.hooksPath ~/.githooks`
 - Cria `~/.phpcs-ai.env` a partir do template (se ainda não existir)
 - Pergunta se deseja instalar o monitor de plugins (opcional)
@@ -252,8 +290,11 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 ```
 ~/.githooks/
-├── pre-commit              ← symlink → revisão PHPCS + IA a cada commit
+├── pre-commit              ← symlink → PHPCS + ESLint + Mustache + IA a cada commit
 └── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
+
+~/.local/bin/
+└── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -263,6 +304,42 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 ~/.phpcs-ai.env             ← suas chaves de API (chmod 600, nunca commitar)
 ```
+
+---
+
+## Cobertura de testes — `moodle-coverage`
+
+Mede a cobertura de testes de **um** plugin Moodle de forma repetível, dentro do container de
+desenvolvimento (com Xdebug). Substitui o processo manual de montar um `phpunit.xml` à mão,
+rodar com `XDEBUG_MODE=coverage` e limpar depois. O `install.sh` cria o symlink
+`~/.local/bin/moodle-coverage`.
+
+```bash
+moodle-coverage <tipo/nome> [--html] [--filter <subpath>]
+```
+
+| Exemplo | Efeito |
+|---|---|
+| `moodle-coverage blocks/playerhud` | Tabela de cobertura por classe no terminal |
+| `moodle-coverage local/playergames --html` | Gera também relatório navegável em `~/coverage-reports/<frankenstyle>/` |
+| `moodle-coverage blocks/playerhud --filter classes/controller` | Escopa a medição a uma subpasta |
+
+O script recebe só o `tipo/nome` (ex.: `blocks/playerhud`) e deriva o resto — frankenstyle,
+`classes/`, `tests/` — montando o `phpunit.xml` temporário escopado ao plugin. Aceita também o
+caminho do host (`html/public/blocks/playerhud`); o prefixo é removido.
+
+### Pré-requisitos e notas de ambiente
+
+- Roda no container de desenvolvimento (`meu-moodle-web-1` por padrão, no topo do script) com
+  **Xdebug** disponível e o ambiente PHPUnit inicializado (`admin/tool/phpunit/cli/init.php`).
+- Usa `memory_limit=-1`: a instrumentação de cobertura do Xdebug consome muito mais memória
+  que uma rodada normal, e o teto padrão do CLI faz suítes grandes **segfaultar**.
+- `--filter` ajusta o `<source>` do `phpunit.xml` (não a flag `--coverage-filter`, que em
+  PHPUnit 10+ apenas soma ao include em vez de restringir).
+- É **ferramenta de bancada**: não vai no ZIP do Plugin Directory e não altera o código-fonte.
+  A medição completa mesmo quando a suíte reporta warnings/deprecations inofensivas (ex.:
+  doc-comment metadata em plugins 4.5+5.0); uma nota final separa "medição-ok-com-avisos" de
+  falha real de teste.
 
 ---
 

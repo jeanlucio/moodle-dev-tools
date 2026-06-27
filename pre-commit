@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS (Moodle standard) + revisão IA paralela em PHP, JS, Mustache, CSS e XML.
+# Pre-commit: PHPCS + ESLint + lint Mustache (gates determinísticos) e revisão IA paralela
+# em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver arquivo do seu tipo staged.
 
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs"
 
@@ -7,11 +8,24 @@ ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '\.(php|js|mustache|css|xml)$' \
     | grep -v 'amd/build/')
 PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
+JS_STAGED=$(echo "$ALL_STAGED" | grep '\.js$')
+MUSTACHE_STAGED=$(echo "$ALL_STAGED" | grep '\.mustache$')
 
 # Sem arquivos relevantes staged → nada a fazer
 if [ -z "$ALL_STAGED" ]; then
     exit 0
 fi
+
+# Procura um caminho relativo subindo a árvore a partir do CWD (raiz do repo no commit).
+# Usado para achar o eslint/config do Moodle quando o plugin está montado sob a árvore.
+find_up() {
+    local rel="$1" dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        [ -e "$dir/$rel" ] && { printf '%s\n' "$dir/$rel"; return 0; }
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
 
 # ------------------------------------------------------------------ #
 #  PHPCS — somente PHP, obrigatório, sem bypass                       #
@@ -40,6 +54,93 @@ if [ -n "$PHP_STAGED" ]; then
     fi
 
     echo "phpcs: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  ESLint — somente JS staged, espelha o CI (--max-lint-warnings 0)  #
+# ------------------------------------------------------------------ #
+if [ -n "$JS_STAGED" ]; then
+    ESLINT_BIN=$(find_up node_modules/.bin/eslint)
+    if [ -z "$ESLINT_BIN" ]; then
+        echo "eslint: binário não encontrado na árvore — lint JS pulado"
+    else
+        echo "eslint: verificando arquivos staged..."
+        echo ""
+
+        ESLINT_ERRORS=0
+        while IFS= read -r FILE; do
+            [ -f "$FILE" ] || continue
+            # Captura o RC do eslint direto (sem pipe na mesma linha, senão $? não o reflete);
+            # só então filtra o ruído do browserslist da saída exibida.
+            OUTPUT=$("$ESLINT_BIN" --max-warnings 0 "$FILE" 2>&1)
+            if [ $? -ne 0 ]; then
+                printf '%s\n' "$OUTPUT" \
+                    | grep -viE 'browserslist|caniuse|update-db|browsers-data'
+                echo ""
+                ESLINT_ERRORS=1
+            fi
+        done <<< "$JS_STAGED"
+
+        if [ $ESLINT_ERRORS -ne 0 ]; then
+            echo "--------------------------------------------------------------"
+            echo "  Commit bloqueado: corrija os erros de ESLint acima."
+            echo "--------------------------------------------------------------"
+            exit 1
+        fi
+
+        echo "eslint: OK"
+    fi
+
+    # Aviso (não bloqueia): amd/src editado sem o amd/build correspondente staged.
+    # Paths do git são relativos à raiz do repo (sem barra inicial), daí 'amd/src/'.
+    SRC_STAGED=$(echo "$JS_STAGED" | grep 'amd/src/')
+    if [ -n "$SRC_STAGED" ]; then
+        BUILD_STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep 'amd/build/')
+        AMD_WARN=0
+        while IFS= read -r SRC; do
+            [ -z "$SRC" ] && continue
+            BUILD="${SRC/amd\/src\//amd\/build\/}"
+            BUILD="${BUILD%.js}.min.js"
+            if ! printf '%s\n' "$BUILD_STAGED" | grep -qF "$BUILD"; then
+                [ $AMD_WARN -eq 0 ] && \
+                    echo "aviso: amd/src editado sem o build correspondente staged —"
+                echo "  $SRC → rode 'npx grunt amd' e adicione $BUILD"
+                AMD_WARN=1
+            fi
+        done <<< "$SRC_STAGED"
+    fi
+fi
+
+# ------------------------------------------------------------------ #
+#  Mustache — check leve: @template obrigatório, chaves balanceadas  #
+# ------------------------------------------------------------------ #
+if [ -n "$MUSTACHE_STAGED" ]; then
+    echo "mustache: verificando arquivos staged..."
+
+    MUSTACHE_ERRORS=0
+    while IFS= read -r FILE; do
+        [ -f "$FILE" ] || continue
+        # @template é obrigatório — o moodle-plugin-ci mustache falha sem ele.
+        if ! grep -q '@template[[:space:]]' "$FILE"; then
+            echo "  $FILE: falta @template component/nome no bloco {{! ... }}"
+            MUSTACHE_ERRORS=1
+        fi
+        # Heurística leve de chaves desbalanceadas (apenas aviso, pode ter falso positivo).
+        OPEN=$(grep -o '{{' "$FILE" | wc -l)
+        CLOSE=$(grep -o '}}' "$FILE" | wc -l)
+        if [ "$OPEN" -ne "$CLOSE" ]; then
+            echo "  aviso $FILE: chaves mustache possivelmente desbalanceadas (\`{{\`=$OPEN, \`}}\`=$CLOSE)"
+        fi
+    done <<< "$MUSTACHE_STAGED"
+
+    if [ $MUSTACHE_ERRORS -ne 0 ]; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: corrija os templates Mustache acima."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+
+    echo "mustache: OK"
 fi
 
 # ------------------------------------------------------------------ #

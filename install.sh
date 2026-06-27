@@ -19,6 +19,12 @@ mkdir -p "$HOOKS_DIR"
 ln -sf "$(pwd)/pre-commit"          "$HOOKS_DIR/pre-commit"
 ln -sf "$(pwd)/prepare-commit-msg"  "$HOOKS_DIR/prepare-commit-msg"
 
+# Ferramenta de cobertura de testes — symlink em ~/.local/bin (no PATH)
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+chmod +x "$(pwd)/coverage.sh"
+ln -sf "$(pwd)/coverage.sh" "$BIN_DIR/moodle-coverage"
+
 # Configura o git globalmente
 git config --global core.hooksPath "$HOOKS_DIR"
 
