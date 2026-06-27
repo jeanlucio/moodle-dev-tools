@@ -22,10 +22,11 @@ ln -sf "$(pwd)/prepare-commit-msg"  "$HOOKS_DIR/prepare-commit-msg"
 # Ferramentas de bancada — symlinks em ~/.local/bin (no PATH)
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
-chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh"
+chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh" "$(pwd)/mirror.sh"
 ln -sf "$(pwd)/coverage.sh"     "$BIN_DIR/moodle-coverage"
 ln -sf "$(pwd)/check-schema.sh" "$BIN_DIR/moodle-check-schema"
 ln -sf "$(pwd)/upgrade.sh"      "$BIN_DIR/moodle-upgrade"
+ln -sf "$(pwd)/mirror.sh"       "$BIN_DIR/moodle-mirror"
 
 # Configura o git globalmente
 git config --global core.hooksPath "$HOOKS_DIR"

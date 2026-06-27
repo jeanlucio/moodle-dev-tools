@@ -9,7 +9,8 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
 6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
 7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos três containers e valida o schema no fim
-8. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+8. **Espelhamento de plugins** — `moodle-mirror`, monta os plugins do dev nos containers compatíveis
+9. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -298,7 +299,8 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 ~/.local/bin/
 ├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
 ├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
-└── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
+├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
+└── moodle-mirror           ← symlink → mirror.sh (espelha plugins do dev p/ web45/web52)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -374,6 +376,29 @@ Sai com código 1 se houver divergência (serve de gate antes de publicar).
 > e nunca instala o site `mdl_`, então `check_database_schema.php` aborta com "Database is not
 > yet installed". É, por construção, uma ferramenta local — e é por isso que o template oficial
 > do Moodle HQ não a inclui.
+
+---
+
+## Espelhamento de plugins — `moodle-mirror`
+
+O web-1 monta a árvore `./html` inteira (tem todos os plugins). O web45 e o web52 montam o
+core próprio + um bind mount **individual por plugin**. Ao criar um plugin novo, é preciso
+adicionar esse mount manualmente — e é fácil esquecer, deixando o plugin só no web-1.
+
+```bash
+moodle-mirror [--dry-run]
+```
+
+Detecta os plugins do dev (remote `jeanlucio`) que faltam em web45/web52, adiciona os bind
+mounts no `docker-compose.yml` (com backup + validação YAML), recria os containers e roda
+`moodle-upgrade` para instalar nos bancos. Fecha o pipeline: **espelhar → recriar → upgrade →
+validar schema**.
+
+**Respeita compatibilidade:** um plugin só é espelhado para um container se o core daquele
+container atende ao `$plugin->requires` **e** (havendo `$plugin->supported`) o branch está no
+range suportado. Isso é essencial — um plugin incompatível (ex.: um tema 5.1-only no web45)
+faz o `admin/cli/upgrade.php` **abortar a instalação de todos os outros**. Plugins de terceiros
+(remote ≠ `jeanlucio`) são ignorados; monte-os à mão se quiser.
 
 ---
 
