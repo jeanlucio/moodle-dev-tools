@@ -75,7 +75,11 @@ echo "IA: gerando mensagem de commit..." >&2
 
 RESULT=""
 
-# Try providers in order of speed: Groq → OpenAI-compatible slots → Gemini
+# Try providers in the env file's priority order: Gemini → Groq → OpenAI-compatible slots.
+# Gemini goes first because it is free; if it fails the next provider takes over.
+[ -z "$RESULT" ] && [ -n "$GEMINI_KEY" ] && \
+    RESULT=$(call_ai "gemini" "$GEMINI_KEY")
+
 [ -z "$RESULT" ] && [ -n "$GROQ_KEY" ] && \
     RESULT=$(call_ai "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL")
 
@@ -87,9 +91,6 @@ for i in "" 2 3 4 5; do
     KEY="${!KEY_VAR}"
     [ -n "$KEY" ] && RESULT=$(call_ai "openai" "$KEY" "${!URL_VAR}" "${!MODEL_VAR}")
 done
-
-[ -z "$RESULT" ] && [ -n "$GEMINI_KEY" ] && \
-    RESULT=$(call_ai "gemini" "$GEMINI_KEY")
 
 if [ -z "$RESULT" ]; then
     echo "IA: sem resposta — escreva a mensagem manualmente." >&2

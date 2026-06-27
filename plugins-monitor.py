@@ -185,29 +185,48 @@ def summarize_openai_compat(
     return result['choices'][0]['message']['content'].strip()
 
 
+def provider_label(api_url: str, model: str) -> str:
+    """Build a human-readable label from the endpoint host and the model id."""
+    if 'nvidia' in api_url:
+        vendor = 'NVIDIA'
+    elif 'openrouter' in api_url:
+        vendor = 'OpenRouter'
+    elif 'groq' in api_url:
+        vendor = 'Groq'
+    elif 'openai.com' in api_url:
+        vendor = 'OpenAI'
+    else:
+        vendor = 'OpenAI-compat'
+    return f'{vendor}/{model}'
+
+
 def summarize_with_fallback(plugin: dict, github_desc: str, env: dict) -> tuple[str, str]:
     providers = []
 
+    # Priority order mirrors ~/.phpcs-ai.env: Gemini → Groq → OpenAI-compatible slots.
     if env.get('GEMINI_KEY'):
         providers.append((
-            'Gemini',
+            'Gemini/gemini-2.0-flash',
             lambda p, g: summarize_gemini(p, g, env['GEMINI_KEY']),
         ))
-    if env.get('OPENAI_KEY') and env.get('OPENAI_URL'):
+    if env.get('GROQ_KEY'):
+        groqurl = 'https://api.groq.com/openai/v1/chat/completions'
+        groqmodel = env.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
         providers.append((
-            f'OpenRouter/{env.get("OPENAI_MODEL", "deepseek")}',
-            lambda p, g: summarize_openai_compat(
-                p, g, env['OPENAI_KEY'], env['OPENAI_URL'],
-                env.get('OPENAI_MODEL', 'deepseek/deepseek-v4-flash'),
-            ),
+            provider_label(groqurl, groqmodel),
+            lambda p, g, k=env['GROQ_KEY'], u=groqurl, m=groqmodel:
+                summarize_openai_compat(p, g, k, u, m),
         ))
-    if env.get('OPENAI2_KEY') and env.get('OPENAI2_URL'):
+    for i in ['', '2', '3', '4', '5']:
+        key = env.get(f'OPENAI{i}_KEY')
+        url = env.get(f'OPENAI{i}_URL')
+        if not key or not url:
+            continue
+        model = env.get(f'OPENAI{i}_MODEL', 'deepseek/deepseek-v4-flash')
         providers.append((
-            f'OpenRouter/{env.get("OPENAI2_MODEL", "gpt-oss")}',
-            lambda p, g: summarize_openai_compat(
-                p, g, env['OPENAI2_KEY'], env['OPENAI2_URL'],
-                env.get('OPENAI2_MODEL', 'openai/gpt-oss-120b:free'),
-            ),
+            provider_label(url, model),
+            lambda p, g, k=key, u=url, m=model:
+                summarize_openai_compat(p, g, k, u, m),
         ))
 
     for name, fn in providers:

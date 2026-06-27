@@ -205,11 +205,11 @@ Editor abre pré-preenchido com a mensagem gerada
 
 ### Ordem dos providers
 
-A IA tenta os providers em sequência, usando o primeiro que responder:
+A IA tenta os providers em sequência, usando o primeiro que responder, na ordem do `~/.phpcs-ai.env`:
 
-1. Groq (mais rápido)
-2. Slots OpenAI-compatible (`OPENAI_*` a `OPENAI5_*`)
-3. Gemini (fallback — sujeito a cota)
+1. Gemini (gratuito — tentado primeiro; se falhar, passa adiante)
+2. Groq
+3. Slots OpenAI-compatible (`OPENAI_*` a `OPENAI5_*`)
 
 ---
 
@@ -393,7 +393,7 @@ português brasileiro via Telegram.
 - Consulta a API pública `download.moodle.org/api/1.3/pluglist.php` (sem bloqueio de bot)
 - Detecta novidades pelo ID auto-incremental dos plugins
 - Busca a descrição no repositório GitHub do plugin via GitHub API
-- Gera o resumo em PT-BR com fallback chain de IAs: Gemini → OpenRouter/DeepSeek → OpenRouter/GPT-OSS
+- Gera o resumo em PT-BR com fallback chain de IAs na ordem do `~/.phpcs-ai.env`: Gemini → Groq → slots OpenAI-compatible
 - Envia a notificação via Telegram
 
 ### Pré-requisitos
@@ -466,7 +466,7 @@ plugins e notifica quando uma nova versão é publicada, com resumo PT-BR das mu
 - Consulta `download.moodle.org/api/1.3/pluglist.php` e compara `timelastreleased` de cada plugin monitorado com o estado salvo
 - Para plugins com GitHub Releases: extrai o `body` da release como changelog
 - Para plugins sem GitHub Releases (maioria): busca `CHANGES.md`/`CHANGELOG.md` diretamente no repositório e extrai a seção da versão mais recente
-- Gera resumo PT-BR das mudanças via IA (mesma fallback chain: Gemini → OpenRouter/DeepSeek → OpenRouter/GPT-OSS)
+- Gera resumo PT-BR das mudanças via IA (mesma fallback chain: Gemini → Groq → slots OpenAI-compatible)
 - Envia notificação Telegram com link para as notas de release e para o Plugin Directory
 
 ### Lista de plugins monitorados
