@@ -8,7 +8,8 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
 6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
-7. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos três containers e valida o schema no fim
+8. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -296,7 +297,8 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 ~/.local/bin/
 ├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
-└── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
+├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
+└── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -372,6 +374,24 @@ Sai com código 1 se houver divergência (serve de gate antes de publicar).
 > e nunca instala o site `mdl_`, então `check_database_schema.php` aborta com "Database is not
 > yet installed". É, por construção, uma ferramenta local — e é por isso que o template oficial
 > do Moodle HQ não a inclui.
+
+---
+
+## Upgrade + validação — `moodle-upgrade`
+
+Acopla "aplicar upgrade" e "validar schema" numa operação atômica — o check de schema vem
+sempre junto, impossível esquecer. É o fluxo para testar um `db/upgrade.php` após bumpar o
+`version.php` de um plugin.
+
+```bash
+moodle-upgrade [51|45|52|all]   # padrão: all
+```
+
+Para cada container do alvo: roda `admin/cli/upgrade.php`, purga os caches, e no fim dispara o
+`moodle-check-schema`. Rodar nos três (`all`) valida o `upgrade.php` em **4.5, 5.1 e 5.2** de
+uma vez. O `--allow-unstable` é aplicado como **fallback automático** apenas se o container
+estiver em versão beta/dev (e avisa quando isso ocorre — sinal de que aquele Moodle precisa ser
+atualizado). Sai com código != 0 se algum upgrade falhar ou o schema divergir.
 
 ---
 
