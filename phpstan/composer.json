@@ -1,0 +1,14 @@
+{
+    "require": {
+        "phpstan/phpstan": "^2.2"
+    },
+    "config": {
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    },
+    "require-dev": {
+        "micaherne/phpstan-moodle": "^1.1",
+        "phpstan/extension-installer": "^1.4"
+    }
+}

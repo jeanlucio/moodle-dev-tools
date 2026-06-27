@@ -1,3 +1,4 @@
 .phpcs-ai.env
 __pycache__/
 *.pyc
+phpstan/vendor/

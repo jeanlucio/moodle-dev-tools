@@ -10,7 +10,8 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
 7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos três containers e valida o schema no fim
 8. **Espelhamento de plugins** — `moodle-mirror`, monta os plugins do dev nos containers compatíveis
-9. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+9. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
+10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -300,7 +301,8 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 ├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
 ├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
 ├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
-└── moodle-mirror           ← symlink → mirror.sh (espelha plugins do dev p/ web45/web52)
+├── moodle-mirror           ← symlink → mirror.sh (espelha plugins do dev p/ web45/web52)
+└── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -417,6 +419,34 @@ Para cada container do alvo: roda `admin/cli/upgrade.php`, purga os caches, e no
 uma vez. O `--allow-unstable` é aplicado como **fallback automático** apenas se o container
 estiver em versão beta/dev (e avisa quando isso ocorre — sinal de que aquele Moodle precisa ser
 atualizado). Sai com código != 0 se algum upgrade falhar ou o schema divergir.
+
+---
+
+## Análise estática — `moodle-phpstan`
+
+Roda o [PHPStan](https://phpstan.org/) num plugin, com a extensão
+[`micaherne/phpstan-moodle`](https://github.com/micaherne/phpstan-moodle) que ensina o
+analisador sobre as classes do core e seus aliases legacy. Pega bugs que o PHPCS (estilo) e o
+moodlecheck (PHPDoc) não veem: chamada a método/função **inexistente**, tipo errado de
+argumento/retorno, acesso a propriedade de algo que pode ser `null`, código morto.
+
+```bash
+moodle-phpstan <tipo/nome> [--level N] [--path <subdir>]
+```
+
+Por padrão analisa `classes/` + as libs de topo (`lib.php`, etc.), no **nível 2**. Níveis altos
+geram ruído no Moodle (`stdClass`/`mixed`) — subir só quando valer.
+
+**Especialmente útil para revisar código gerado por IA:** o erro mais característico da IA é
+"alucinar" uma API — inventar um método plausível que não existe. O PHPStan acusa isso de forma
+**determinística**, complementando a revisão IA do pre-commit (que é probabilística).
+
+A extensão Moodle é essencial: sem ela, o `scanDirectories` puro descobre as classes do core de
+forma inconsistente e o nível 2 afoga em falsos positivos de aliases (`cm_info` etc.). A
+extensão bootstrapa o classloader do Moodle a partir de `moodle.rootDirectory` (a raiz com
+`lib/components.json` + `vendor/`, que na estrutura `public/` do Moodle 5.x é um nível **acima**
+do docroot). O PHPStan e a extensão vivem num projeto Composer isolado em `phpstan/` — não tocam
+o Moodle nem os containers. Roda no host (PHP do host, analisando como PHP 8.2).
 
 ---
 

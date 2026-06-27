@@ -22,11 +22,22 @@ ln -sf "$(pwd)/prepare-commit-msg"  "$HOOKS_DIR/prepare-commit-msg"
 # Ferramentas de bancada — symlinks em ~/.local/bin (no PATH)
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
-chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh" "$(pwd)/mirror.sh"
+chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh" \
+    "$(pwd)/mirror.sh" "$(pwd)/phpstan.sh"
 ln -sf "$(pwd)/coverage.sh"     "$BIN_DIR/moodle-coverage"
 ln -sf "$(pwd)/check-schema.sh" "$BIN_DIR/moodle-check-schema"
 ln -sf "$(pwd)/upgrade.sh"      "$BIN_DIR/moodle-upgrade"
 ln -sf "$(pwd)/mirror.sh"       "$BIN_DIR/moodle-mirror"
+ln -sf "$(pwd)/phpstan.sh"      "$BIN_DIR/moodle-phpstan"
+
+# PHPStan + extensão Moodle ficam num projeto Composer isolado em phpstan/ (não no Moodle).
+if command -v composer >/dev/null 2>&1; then
+    (cd "$(pwd)/phpstan" && composer install --no-interaction >/dev/null 2>&1) \
+        && echo "PHPStan (+ extensão Moodle) instalado em phpstan/vendor" \
+        || echo "aviso: 'composer install' em phpstan/ falhou — rode manualmente"
+else
+    echo "aviso: composer não encontrado — moodle-phpstan precisa de 'composer install' em phpstan/"
+fi
 
 # Configura o git globalmente
 git config --global core.hooksPath "$HOOKS_DIR"
