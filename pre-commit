@@ -207,7 +207,7 @@ You are a Moodle plugin code reviewer. Analyse the diff below checking ONLY what
 13. require_once or include used to load a file from classes/ — Moodle autoloads via namespace; remove the require_once
 14. print_error() called — deprecated since Moodle 4.0; replace with throw new moodle_exception()
 15. $DB->get_record() filtering only by ['id' => $var] where $var comes from required_param/optional_param visible in the same diff, without a JOIN or additional instanceid/contextid/courseid filter
-16. style="..." attribute on an HTML tag inside a .php or .mustache file — create a semantic class in styles.css instead
+16. style="..." attribute on an HTML tag inside a .php or .mustache file — create a semantic class in styles.css instead. EXCEPTION: a dynamic value computed per render (e.g. a progress-bar width, style="width: {{value}}%" or style="--custom-prop: {{value}}") is acceptable and must NOT be flagged — this mirrors Moodle core's own lib/templates/progress_bar.mustache pattern. Only flag static/constant style values.
 17. <script> tag inserted directly in PHP or Mustache — use AMD via $PAGE->requires->js_call_amd()
 18. String in lang/pt_br/ using "aluno" or "alunos" — AMOS standard is "estudante"/"estudantes"
 19. String added to lang/en/ with no counterpart in lang/pt_br/ — report only when the diff includes changes to both lang/ files
@@ -233,7 +233,7 @@ You are a Moodle plugin code reviewer. Analyse the diff below checking ONLY what
 
 === CSS (*.css) ===
 35. !important — forbidden; resolve the conflict by increasing selector specificity
-36. CSS selector without a path-class scope (.path-* or body.path-*) — prevents style leaks to other pages
+36. CSS selector without a path-class scope (.path-* or body.path-*) — prevents style leaks to other pages. EXCEPTION: rules that style the inside of a Bootstrap modal hoisted to <body> via appendChild() before .show() may instead be scoped by the modal's own unique ID (e.g. #ph-wizard-modal .some-class) — this is the correct, intentional pattern for hoisted modals, since ancestor/path-class scoping breaks once the modal is moved out of the page body hierarchy. Only flag CSS with no scope at all (neither path-class nor a specific element/modal ID).
 37. Hardcoded hex value outside var() — e.g. color: #333 should be var(--name, #333); ignore if already inside var()
 
 === XML (db/*.xml) ===
