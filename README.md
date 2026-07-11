@@ -45,6 +45,15 @@ Notas:
 
 A revisão cobre **PHP, JS (AMD), Mustache, CSS e XML** — todos os tipos de arquivo de um plugin Moodle. Arquivos minificados (`amd/build/`) são ignorados.
 
+Arquivos dentro de um `docs/` na raiz do repositório também ficam de fora **só da revisão IA**:
+esse diretório hospeda o site de documentação de cada plugin no GitHub Pages (Jekyll, CSS, JS,
+imagens — conteúdo estático, não código Moodle), e as regras da IA partem do pressuposto de que
+o diff é código de plugin (escopo de CSS por `.path-*`, PHPDoc, AMD, etc.), o que gera falso
+positivo ali. Os gates determinísticos (PHPCS, ESLint, Mustache) continuam rodando normalmente
+em `docs/` quando há arquivo do tipo certo staged — por exemplo, o ESLint ainda pega erro de
+estilo num `docs/assets/js/*.js`. Caso de origem: `moodle-mod_playerwords`, commit que adicionou
+o site de documentação do plugin.
+
 #### PHP
 
 | # | Regra |
@@ -135,7 +144,7 @@ PHPCS (local, ~60ms)
     │    ├── @template ausente → bloqueia
     │    └── OK
          │
-         ▼ (PHP + JS + Mustache + CSS + XML, exclui amd/build/)
+         ▼ (PHP + JS + Mustache + CSS + XML, exclui amd/build/ e docs/)
     IAs em paralelo (~5–15s)
     Gemini, Groq, OpenAI-compatible (até 5 slots)
          │

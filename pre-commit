@@ -11,6 +11,13 @@ PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
 JS_STAGED=$(echo "$ALL_STAGED" | grep '\.js$')
 MUSTACHE_STAGED=$(echo "$ALL_STAGED" | grep '\.mustache$')
 
+# docs/ hosts each plugin's own GitHub Pages site (static, non-Moodle content).
+# The AI review's rules assume Moodle plugin code (path-class CSS scoping,
+# PHPDoc, AMD, etc.) and don't apply there, so it's excluded from that prompt
+# only. PHPCS/ESLint/Mustache above still run on docs/ normally — those checks
+# are generic enough to stay useful (e.g. ESLint on docs/assets/js/*.js).
+AI_STAGED=$(echo "$ALL_STAGED" | grep -v '^docs/')
+
 # Sem arquivos relevantes staged → nada a fazer
 if [ -z "$ALL_STAGED" ]; then
     exit 0
@@ -166,11 +173,14 @@ for i in "" 2 3 4 5; do
 done
 [ $HAS_KEY -eq 0 ] && exit 0
 
+# Só arquivos de docs/ staged (nada fora dele) → nada pra IA revisar.
+[ -z "$AI_STAGED" ] && exit 0
+
 LICENSE_FILTER='This file is part of Moodle\|Moodle is free software\|GNU General Public License\|along with Moodle\|see <https://www.gnu.org/licenses\|You should have received a copy\|WITHOUT ANY WARRANTY\|the Free Software Foundation'
 
 # Divide o orçamento de 2000 linhas proporcionalmente entre os arquivos.
 # Garante que todo arquivo seja representado no diff enviado à IA.
-FILE_COUNT=$(echo "$ALL_STAGED" | grep -c .)
+FILE_COUNT=$(echo "$AI_STAGED" | grep -c .)
 LINES_PER_FILE=$(( 2000 / FILE_COUNT ))
 [ "$LINES_PER_FILE" -lt 50 ] && LINES_PER_FILE=50
 
@@ -181,7 +191,7 @@ while IFS= read -r FILE; do
         | grep -v "$LICENSE_FILTER" \
         | head -n "$LINES_PER_FILE")
     [ -n "$FILE_DIFF" ] && DIFF+="${FILE_DIFF}"$'\n'
-done <<< "$ALL_STAGED"
+done <<< "$AI_STAGED"
 
 [ -z "$DIFF" ] && exit 0
 
