@@ -459,6 +459,33 @@ o Moodle nem os containers. Roda no host (PHP do host, analisando como PHP 8.2).
 
 ---
 
+## Auditoria de escopo — `moodle-scope-audit`
+
+Faz o diff mecânico entre a árvore de arquivos do §6 de um `SCOPE.md` e o que realmente existe
+no repositório do plugin. Nasceu de um incidente real: o `SCOPE.md` do `mod_playercross`
+previa `managewords.php`, `ranking.php`, `ranking_service.php` e `ai_word_generator.php` desde
+a Fase 3, mas cinco fases inteiras foram marcadas como concluídas sem nenhum desses arquivos
+existir — a verificação de "fase concluída" tinha sido feita contra um checklist reconstruído
+de memória a partir do critério de aceite em prosa, não contra a árvore literal do §6.
+
+```bash
+moodle-scope-audit <tipo/nome> [--scope caminho/para/SCOPE.md]
+```
+
+Lê a árvore ASCII (`├──`/`└──`/`│`) dentro do bloco de código do §6, reconstrói o caminho
+relativo de cada entrada a partir da indentação, expande listas em chaves (`{a,b,c}_test.php`,
+usadas para compactar vários arquivos de teste parecidos numa linha só — inclusive quando essa
+lista foi quebrada em várias linhas físicas para caber no limite de 132 colunas) e confere cada
+caminho contra o disco. Roda ao final de cada fase do `§16` como parte do Definition of Done —
+não substitui a verificação de que o *comportamento* funciona (PHPUnit, Playwright), só garante
+que nenhum arquivo planejado foi esquecido silenciosamente.
+
+Saída limpa esperada no fim do desenvolvimento: apenas `CHANGES.md`, `README.md` e
+`COPYING.txt` (artefatos da Fase 6/release, que o próprio `TEMPLATE_SCOPE.md` já documenta como
+corretamente vazios/ausentes até a primeira tag).
+
+---
+
 ## Ferramentas de manutenção de código
 
 ### sortlang.php — ordenação de strings de idioma
