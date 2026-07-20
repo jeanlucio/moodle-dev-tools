@@ -14,6 +14,7 @@ from pathlib import Path
 
 ENV_FILE      = Path.home() / '.phpcs-ai.env'
 STATE_FILE    = Path.home() / '.moodle-plugins-seen.json'
+WEEKLY_FILE   = Path.home() / '.moodle-plugins-weekly.json'
 LOG_FILE      = Path.home() / '.moodle-plugins-monitor.log'
 PLUGLIST_URL  = 'https://download.moodle.org/api/1.3/pluglist.php'
 GITHUB_API    = 'https://api.github.com/repos/{owner}/{repo}'
@@ -55,6 +56,25 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state))
+
+
+def append_weekly(plugin: dict, summary: str) -> None:
+    """Accumulates plugin data for the weekly digest (jeanlucio-github-io/scripts/weekly-digest.py)."""
+    entries: list = []
+    if WEEKLY_FILE.exists():
+        try:
+            entries = json.loads(WEEKLY_FILE.read_text())
+        except Exception:
+            entries = []
+    entries.append({
+        'component': plugin['component'],
+        'name': plugin['name'],
+        'tipo': component_type_label(plugin['component']),
+        'summary': summary,
+        'link': f'https://moodle.org/plugins/view.php?plugin={plugin["component"]}',
+        'detected_at': datetime.datetime.now().isoformat(timespec='seconds'),
+    })
+    WEEKLY_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +349,7 @@ def main() -> None:
         try:
             send_telegram(token, chat_id, msg)
             seen_ids.add(plugin['id'])
+            append_weekly(plugin, summary)
             log('  Notificado via Telegram.')
         except Exception as exc:
             log(f'  ERRO ao enviar Telegram: {exc}')

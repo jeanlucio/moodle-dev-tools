@@ -560,6 +560,10 @@ português brasileiro via Telegram.
 - Busca a descrição no repositório GitHub do plugin via GitHub API
 - Gera o resumo em PT-BR com fallback chain de IAs na ordem do `~/.phpcs-ai.env`: Gemini → Groq → slots OpenAI-compatible
 - Envia a notificação via Telegram
+- Acumula cada plugin notificado (`append_weekly()`) em `~/.moodle-plugins-weekly.json` — consumido
+  pelo `weekly-digest.py` do repo `jeanlucio-github-io` para gerar o post semanal "Destaques da
+  Semana" do blog. O arquivo é uma lista JSON simples (`component`, `name`, `tipo`, `summary`,
+  `link`, `detected_at`); o `weekly-digest.py` esvazia o acumulador (`[]`) depois de publicar.
 
 ### Pré-requisitos
 
