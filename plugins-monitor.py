@@ -18,6 +18,10 @@ LOG_FILE      = Path.home() / '.moodle-plugins-monitor.log'
 PLUGLIST_URL  = 'https://download.moodle.org/api/1.3/pluglist.php'
 GITHUB_API    = 'https://api.github.com/repos/{owner}/{repo}'
 
+# Some AI providers (e.g. Groq) return 403 for urllib's default
+# "Python-urllib/x.y" User-Agent, treating it as bot traffic.
+USER_AGENT    = 'MoodlePluginMonitor/1.0'
+
 
 # ---------------------------------------------------------------------------
 # Utilitários
@@ -60,7 +64,7 @@ def save_state(state: dict) -> None:
 def fetch_pluglist() -> dict:
     req = urllib.request.Request(
         PLUGLIST_URL,
-        headers={'User-Agent': 'MoodlePluginMonitor/1.0'},
+        headers={'User-Agent': USER_AGENT},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read())
@@ -93,7 +97,7 @@ def fetch_github_description(source_url: str) -> str:
     req = urllib.request.Request(
         url,
         headers={
-            'User-Agent': 'MoodlePluginMonitor/1.0',
+            'User-Agent': USER_AGENT,
             'Accept': 'application/vnd.github.v3+json',
         },
     )
@@ -114,7 +118,7 @@ def http_post(url: str, headers: dict, body: dict) -> dict:
     req = urllib.request.Request(
         url,
         data=data,
-        headers={**headers, 'Content-Type': 'application/json'},
+        headers={**headers, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT},
     )
     with urllib.request.urlopen(req, timeout=40) as resp:
         return json.loads(resp.read())
@@ -211,7 +215,7 @@ def summarize_with_fallback(plugin: dict, github_desc: str, env: dict) -> tuple[
         ))
     if env.get('GROQ_KEY'):
         groqurl = 'https://api.groq.com/openai/v1/chat/completions'
-        groqmodel = env.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
+        groqmodel = env.get('GROQ_MODEL', 'openai/gpt-oss-120b')
         providers.append((
             provider_label(groqurl, groqmodel),
             lambda p, g, k=env['GROQ_KEY'], u=groqurl, m=groqmodel:
