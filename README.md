@@ -278,7 +278,7 @@ GEMINI_KEY=sua-chave
 
 # Groq
 GROQ_KEY=sua-chave
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 
 # OpenAI-compatible (OpenRouter, NVIDIA NIM, OpenAI, etc.)
 OPENAI_KEY=sua-chave
@@ -294,10 +294,32 @@ O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
 | Provider | Modelo | Observação |
 |---|---|---|
-| Groq | `llama-3.3-70b-versatile` | Rápido, consistente |
+| Groq | `openai/gpt-oss-120b` | Substituto oficial do `llama-3.3-70b-versatile` (ver nota de depreciação abaixo) |
 | OpenRouter | `deepseek/deepseek-v4-flash` | Boa relação custo/qualidade |
 | OpenRouter | `openai/gpt-oss-120b:free` | Formato de resposta excelente |
 | NVIDIA NIM | `meta/llama-3.3-70b-instruct` | Gratuito com conta NVIDIA |
+
+### Depreciação do `llama-3.3-70b-versatile` na Groq
+
+A Groq depreciou o `llama-3.3-70b-versatile` e decomissiona o modelo em **16/08/2026**; o
+substituto oficial recomendado é o `openai/gpt-oss-120b`. Basta atualizar `GROQ_MODEL` em
+`~/.phpcs-ai.env` — nenhum outro ajuste é necessário, o nome do modelo é passado direto para
+o payload da API sem validação de allow-list.
+
+**Se a revisão IA passar a falhar com `[Groq / ...] falhou: ERRO: HTTP 403: HTTP Error 403:
+Forbidden` logo após essa troca, não é o nome do modelo.** Um teste direto via `curl` com a
+mesma chave/modelo retornava 200; o mesmo request feito pelo `phpcs-ai-call.py` (Python
+`urllib`) retornava 403. A causa era o `User-Agent` padrão do `urllib`
+(`Python-urllib/3.x`), que a Groq (ou o WAF/Cloudflare na frente dela) rejeita como tráfego de
+bot — independente de modelo, chave ou conta. O script agora envia um `User-Agent` explícito
+(`moodle-dev-tools-phpcs-ai-call/1.0`) em toda chamada HTTP, o que resolve o 403. Se voltar a
+acontecer, teste isolado com:
+
+```bash
+source ~/.phpcs-ai.env
+echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
+  "groq" "$GROQ_KEY" "https://api.groq.com/openai/v1/chat/completions" "$GROQ_MODEL"
+```
 
 ## Estrutura dos arquivos instalados
 

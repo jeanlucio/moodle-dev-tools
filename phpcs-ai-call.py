@@ -6,6 +6,10 @@ import sys
 import urllib.error
 import urllib.request
 
+# Some providers (e.g. Groq) return 403 for urllib's default
+# "Python-urllib/x.y" User-Agent, treating it as bot traffic.
+USER_AGENT = 'moodle-dev-tools-phpcs-ai-call/1.0'
+
 
 def _http_error_message(e):
     """Extract the meaningful error message from an HTTPError response body."""
@@ -28,7 +32,7 @@ def call_gemini(key, prompt):
     }).encode()
     req = urllib.request.Request(
         url, data=payload,
-        headers={'Content-Type': 'application/json'},
+        headers={'Content-Type': 'application/json', 'User-Agent': USER_AGENT},
         method='POST'
     )
     try:
@@ -50,6 +54,7 @@ def call_openai(url, key, model, prompt):
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {key}',
+        'User-Agent': USER_AGENT,
     }
     req = urllib.request.Request(url, data=body, headers=headers, method='POST')
     try:
