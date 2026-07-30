@@ -128,9 +128,13 @@ if [ -n "$FILTER" ]; then
     fi
     SOURCE_INCLUDE="      <directory suffix=\".php\">$PLUGIN_ABS/$FILTER</directory>"
 else
-    # classes/ inteiro + arquivos de função no topo do plugin, se existirem.
+    # classes/ inteiro + arquivos de função no topo do plugin, se existirem, mais
+    # db/upgrade.php: não roda automaticamente sob o schema fresco do ambiente de teste,
+    # mas qualquer teste que chame xmldb_<plugin>_upgrade() diretamente (ex.:
+    # db_upgrade_test.php) já é medido normalmente pelo Xdebug uma vez que o arquivo
+    # esteja listado aqui — confirmado empiricamente, não é limitação do PHPUnit/Xdebug.
     EXTRA_FILES=$(docker exec "$CONTAINER" sh -c "
-        for f in lib.php locallib.php renderer.php externallib.php; do
+        for f in lib.php locallib.php renderer.php externallib.php db/upgrade.php; do
             [ -f \"$PLUGIN_ABS/\$f\" ] && echo \"      <file>$PLUGIN_ABS/\$f</file>\"
         done
         true
