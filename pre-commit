@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Pre-commit: PHPCS + ESLint + lint Mustache (gates determinísticos) e revisão IA paralela
 # em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver arquivo do seu tipo staged.
+# A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
+# ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
+# API paga) quando o binário "claude" está no PATH.
 
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs"
 
@@ -163,7 +166,18 @@ fi
 GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL="${GROQ_MODEL:-openai/gpt-oss-120b}"
 
-# Verifica se pelo menos uma chave está configurada
+# Claude CLI (opcional) — roda contra a assinatura Claude Code (não API paga).
+# Usa Fable por padrão; só cai pra Opus se a chamada do Fable falhar (ex.: sem
+# créditos do Fable no momento). Requer o binário "claude" no PATH e sessão
+# logada na máquina que faz o commit. SKIP_CLAUDE_CLI=1 desativa.
+CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-fable-5}"
+CLAUDE_CLI_FALLBACK_MODEL="${CLAUDE_CLI_FALLBACK_MODEL:-claude-opus-5}"
+CLAUDE_CLI_AVAILABLE=0
+if [ "${SKIP_CLAUDE_CLI}" != "1" ] && command -v claude >/dev/null 2>&1; then
+    CLAUDE_CLI_AVAILABLE=1
+fi
+
+# Verifica se pelo menos um provider está configurado (chave de API ou Claude CLI)
 HAS_KEY=0
 [ -n "$GEMINI_KEY" ] && HAS_KEY=1
 [ -n "$GROQ_KEY" ]   && HAS_KEY=1
@@ -171,6 +185,7 @@ for i in "" 2 3 4 5; do
     KEY_VAR="OPENAI${i}_KEY"
     [ -n "${!KEY_VAR}" ] && HAS_KEY=1
 done
+[ $CLAUDE_CLI_AVAILABLE -eq 1 ] && HAS_KEY=1
 [ $HAS_KEY -eq 0 ] && exit 0
 
 # Só arquivos de docs/ staged (nada fora dele) → nada pra IA revisar.
@@ -294,6 +309,11 @@ for i in "" 2 3 4 5; do
     MODEL="${!MODEL_VAR}"
     [ -n "$KEY" ] && start_provider "${MODEL:-OpenAI${i}}" "openai" "$KEY" "$URL" "$MODEL"
 done
+
+if [ $CLAUDE_CLI_AVAILABLE -eq 1 ]; then
+    start_provider "Claude CLI / ${CLAUDE_CLI_MODEL} (assinatura)" \
+        "claudecli" "$CLAUDE_CLI_MODEL" "$CLAUDE_CLI_FALLBACK_MODEL"
+fi
 
 for PID in "${PIDS[@]}"; do
     wait "$PID"

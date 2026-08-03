@@ -11,7 +11,8 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos três containers e valida o schema no fim
 8. **Espelhamento de plugins** — `moodle-mirror`, monta os plugins do dev nos containers compatíveis
 9. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
-10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+10. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
+11. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 
 ---
 
@@ -146,7 +147,7 @@ PHPCS (local, ~60ms)
          │
          ▼ (PHP + JS + Mustache + CSS + XML, exclui amd/build/ e docs/)
     IAs em paralelo (~5–15s)
-    Gemini, Groq, OpenAI-compatible (até 5 slots)
+    Gemini, Groq, OpenAI-compatible (até 5 slots), Claude CLI (assinatura)
          │
          ├── qualquer uma retorna BLOQUEADO → bloqueia com relatório
          └── todas aprovam
@@ -290,6 +291,31 @@ Slots de `OPENAI` a `OPENAI5` são suportados. Basta adicionar `OPENAI2_KEY`, `O
 
 O arquivo `~/.phpcs-ai.env.example` tem o template completo com comentários.
 
+### Claude CLI como provider (assinatura, não API paga)
+
+Além dos providers via API acima, o hook ativa automaticamente um provider extra se o
+binário `claude` (Claude Code) estiver no `PATH` e logado na máquina que faz o commit —
+sem precisar de nenhuma chave em `~/.phpcs-ai.env`. A chamada roda em modo headless
+(`claude -p`) e é forçada a usar a **assinatura** (Pro/Max) em vez de uma API key: o
+processo filho tem `ANTHROPIC_API_KEY` (e as flags de Bedrock/Vertex) removidas do
+ambiente antes de rodar, mesmo que essas variáveis existam na sua shell.
+
+Por padrão tenta `claude-fable-5`; se essa chamada falhar por qualquer motivo (ex.:
+créditos do Fable esgotados no momento), cai automaticamente para `claude-opus-5` — a
+segunda chamada continua contra a assinatura, nunca vira cobrança por token.
+
+```bash
+# ~/.phpcs-ai.env — todas opcionais, já vêm com esses padrões
+CLAUDE_CLI_MODEL=claude-fable-5
+CLAUDE_CLI_FALLBACK_MODEL=claude-opus-5
+SKIP_CLAUDE_CLI=1   # desativa esse provider mesmo com o binário disponível
+```
+
+Como cada commit passa a gastar cota de uso da assinatura (limite de 5h/semanal do
+Claude Code), avalie se vale manter ativo em máquinas onde você comita com muita
+frequência — `SKIP_CLAUDE_CLI=1` desliga só esse provider, os demais (Gemini/Groq/
+OpenAI-compatible) continuam normalmente.
+
 ### Modelos gratuitos testados e aprovados
 
 | Provider | Modelo | Observação |
@@ -333,7 +359,9 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 ├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
 ├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
 ├── moodle-mirror           ← symlink → mirror.sh (espelha plugins do dev p/ web45/web52)
-└── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
+├── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
+├── moodle-scope-audit      ← symlink → scope-audit.sh (§6 do SCOPE.md vs disco)
+└── moodle-security-audit   ← symlink → security-audit.sh (auditoria de segurança determinística + IA)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -505,6 +533,174 @@ que nenhum arquivo planejado foi esquecido silenciosamente.
 Saída limpa esperada no fim do desenvolvimento: apenas `CHANGES.md`, `README.md` e
 `COPYING.txt` (artefatos da Fase 6/release, que o próprio `TEMPLATE_SCOPE.md` já documenta como
 corretamente vazios/ausentes até a primeira tag).
+
+---
+
+## Auditoria de segurança — `moodle-security-audit`
+
+Lê o plugin **inteiro** procurando vulnerabilidades e emite um relatório com grade, achados
+por severidade e correção recomendada. Complementa o pre-commit, que revisa **diffs**.
+
+A diferença não é de grau, é de natureza: um achado como "esta variável recebe
+`format_string()` e a irmã ao lado, no mesmo `if`, não recebe" é invisível para revisão de
+diff — o diff pode nem conter as duas linhas, e mesmo que contenha, julgar exige seguir a
+cadeia de chamada até o template que renderiza o valor. Foi exatamente esse buraco que deixou
+passar um bug real no `filter_playerhud` que os 5 providers do pre-commit não pegaram.
+
+```bash
+moodle-security-audit <tipo/nome> [opções]
+```
+
+Relatório em **`<plugin>/.plans/security-audit/<frankenstyle>-<AAAA-MM-DD>-<HHMMSS>.md`** — junto do
+código que descreve. A ferramenta usa apenas ferramentas de leitura sobre o código: é
+estruturalmente incapaz de alterar o plugin auditado.
+
+`.plans/` é a mesma pasta que o ecossistema já usa para arquivos de trabalho de assistente
+de IA — os relatórios ficam numa subpasta própria (`security-audit/`) dentro dela, mas é a
+pasta `.plans/` inteira que é criada se não existir e **garantidamente entra no
+`.gitignore` do plugin** — a ferramenta confere a cada rodada, cria o `.gitignore` se faltar
+e acrescenta a entrada se estiver ausente. Isso não é conveniência: um relatório que aponta
+linha e prova de conceito
+de vulnerabilidade não pode virar arquivo versionado num repositório público.
+
+### Pipeline
+
+| Fase | O que faz |
+|---|---|
+| **A** | Coleta determinística: PHPStan em nível alto, versões de libs empacotadas, drift de schema |
+| **B** | **Triagem por IA** das mensagens do PHPStan: `real_bug` / `security_relevant` / `moodle_idiom_noise` |
+| **C** | Varredura semântica por IA, em lotes, com o agente lendo o código por conta própria |
+| **D** | Verificação: cada candidato precisa ser confirmado explorável ou é descartado |
+| **E** | Grade determinística + relatório Markdown |
+
+### Por que o PHPStan roda no nível 6 aqui e no nível 2 no `moodle-phpstan`
+
+Porque a Fase B muda a economia. Medido no `filter_playerhud` (3.718 linhas): nível 2 → 2
+mensagens, nível 5 → 6, **nível 8 → 54**. Cerca de 75% do nível 8 é ruído genérico de idioma
+Moodle (`type has no value type specified in iterable type array`), mas o resto é sinal sério
+— `Cannot access property $id on core\context\course|false`, `Strict comparison ... will
+always evaluate to false`, retorno faltando. Sem triagem isso é impraticável na mão; com
+triagem, o nível alto vira utilizável pela primeira vez.
+
+Identificadores puramente de PHPDoc/generics (`missingType.*`) são descartados
+**deterministicamente**, antes de qualquer chamada de IA — não faz sentido gastar cota para
+rejeitar um por um. Todo o resto vai para triagem, então o filtro permanece conservador.
+
+### Regras verificadas
+
+Catálogo em [`security-rules.md`](security-rules.md) — editar esse arquivo é como se ajusta a
+auditoria. Três camadas:
+
+1. **Guia oficial do Moodle** ([policies/security](https://moodledev.io/general/development/policies/security)) — as 15 categorias
+   oficiais de vulnerabilidade são o vocabulário fechado do campo `category` de todo achado,
+   mais as regras verificáveis do "Summary of the guidelines". Quatro categorias
+   (`brute_forcing_login`, `insecure_config_management`, `buffer_overruns`,
+   `social_engineering`) são de escopo de site e só são reportadas se o plugin implementar
+   aquilo por conta própria.
+2. **Regras específicas de plugin** — isolamento por `instanceid`, triple-mustache em campo
+   armazenado, cleanup em `delete_instance`/`course_deleted`, column drift de backup e
+   privacy, saída de IA como entrada não-confiável.
+3. **Superfície deste ecossistema** — SSRF em chamadas de IA, condição de corrida em
+   economia/quest, aleatoriedade insegura em tokens, path traversal.
+
+### Grade
+
+A nota é **dominada pelo pior achado**, não por soma de penalidades:
+
+| Pior achado presente | Nota |
+|---|---|
+| `critical` | **F** |
+| `high` | **D** |
+| `medium` | **C** |
+| 3+ `low` | **B+** |
+| 1–2 `low` | **A** |
+| nenhum (ou só `info`) | **A+** |
+
+**Só achados de segurança contam** — bugs de código triados do PHPStan vão numa seção
+separada e não afetam a nota.
+
+O modelo aditivo original (100 − penalidades) foi abandonado porque distorce um relatório de
+segurança: ele diz que oito falhas de higiene são piores que um XSS armazenado. Um relatório
+com um `high` não é "quase tudo bem" — o achado principal define a nota.
+
+A curva foi calibrada contra três relatórios publicados do MDL Shield e os reproduz
+exatamente: `block_playerhud` (2 low + 1 info → A), `local_information_center` (8 low + 1
+info → B+) e `filter_playerhud` (1 high + 1 medium + 1 low + 1 info → D). Repare que oito
+`low` mal movem a nota, enquanto um único `high` despenca para D — é essa assimetria que a
+fórmula aditiva não conseguia expressar.
+
+### Opções
+
+| Flag | Padrão | Efeito |
+|---|---|---|
+| `--model` | `claude-fable-5` | Modelo primário |
+| `--fallback-model` | `claude-opus-5` | Usado se o primário falhar (ex.: créditos do Fable esgotados) |
+| `--phpstan-level N` | `6` | Nível do PHPStan |
+| `--batch-lines N` | `10000` | Orçamento de linhas por lote |
+| `--jobs N` | `5` | Chamadas de IA em paralelo |
+| `--with-moodlecheck` | — | Roda também o `local_moodlecheck` (PHPDoc; release, não segurança) |
+| `--no-verify` | — | Pula a Fase D (mais rápido, mais falso positivo) |
+| `--no-cache` | — | Ignora o cache de lotes |
+| `--json` | — | Grava também o relatório em JSON |
+| `--from-json ARQ` | — | Re-renderiza o relatório de um JSON já gerado, sem refazer a análise |
+
+### Estrutura do relatório
+
+Segue a forma de um relatório de revisão de segurança profissional, na ordem em que se lê:
+
+1. **Nota geral** — grade em letra, pontuação e tabela por severidade
+2. **Sumário executivo** — postura de segurança e o que os achados significam na prática
+3. **Metodologia** — escopo (arquivos/linhas), o que foi examinado, superfície de ataque,
+   evidências de rigor (Privacy API, capabilities, backup, testes) e dependências de terceiro
+4. **Achados** — cada um com severidade/categoria/regra/quem explora, locais afetados,
+   **trecho do código**, descrição, avaliação de impacto, mitigações já presentes, prova de
+   conceito e correção recomendada
+5. **Pontos fortes de segurança** — práticas defensivas verificadas no código
+6. **Bugs de código (PHPStan triado)** — separados, não afetam a nota
+7. **Descartados na verificação** — candidatos refutados, para transparência e calibragem
+8. **Conclusão**
+
+O trecho de código é extraído **do arquivo em disco** pelo Python (linha do achado ± 3 de
+contexto, com `>` marcando a linha), não copiado pelo modelo — assim nunca diverge do que
+está realmente lá. `--from-json` re-renderiza tudo isso sem refazer a análise, o que torna
+barato ajustar o modelo do relatório.
+
+### Custo e cache
+
+Roda contra a **assinatura** Claude Code, nunca a API paga: `ANTHROPIC_API_KEY` e as flags de
+Bedrock/Vertex são removidas do ambiente do processo filho, e cada chamada usa `--safe-mode`
+(pula `CLAUDE.md`/skills/hooks do usuário — as regras que importam já vão explícitas via
+`--append-system-prompt`, então carregar tudo de novo em toda chamada só custava tokens à
+toa). Consome cota de forma relevante — um plugin de 70 mil linhas dá ~8-10 lotes de
+varredura, mais a triagem do PHPStan e uma verificação por achado candidato.
+
+O cache em `~/.moodle-security-audit-cache/<frankenstyle>/` cobre **as três fases de IA**
+(triagem, varredura e verificação), cada uma chaveada pelo hash do que decide seu resultado
+(conteúdo dos arquivos do lote, ou o achado sendo verificado). Isso tem dois efeitos: re-rodar
+depois de corrigir um arquivo só reprocessa o que mudou, e **uma rodada interrompida no meio
+retoma de onde parou** — se a cota acabar na Fase D, rodar o mesmo comando de novo pula A, B e
+C inteiras. Uma verificação que falhou por erro transitório (limite de cota, rede) não entra
+no cache — a próxima rodada tenta de novo, em vez de herdar um "refutado" que na verdade foi
+uma falha de infraestrutura.
+
+### Progresso
+
+Cada fase de IA imprime uma linha por item **conforme ele termina** (não na ordem em que foi
+disparado — um lote lento não deixa os outros "mudos" até terminar), com tempo decorrido e uma
+estimativa de tempo restante calculada pela vazão observada até ali. A estimativa é pouco
+confiável na primeira conclusão de cada fase e se corrige sozinha a partir da segunda. O tempo
+total da auditoria aparece ao final.
+
+### O que fica de fora, e por quê
+
+PHPCS, ESLint, stylelint e gherkinlint estão disponíveis nesta máquina mas **não** entram: já
+rodam no pre-commit/CI, o plugin que comita já passa neles, e praticamente não têm falso
+positivo a triar. Incluí-los viraria "rode todo linter do mundo" e diluiria o relatório. O
+critério de inclusão é: a ferramenta produz sinal de segurança, **ou** produz sinal que
+precisa de triagem por IA para ser usável.
+
+Validador Mustache completo não está instalado (só existe no `moodle-plugin-ci`); o
+pre-commit faz o check leve de `@template` + chaves balanceadas.
 
 ---
 
