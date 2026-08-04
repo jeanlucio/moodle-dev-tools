@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<title>moodle-dev-tools — progresso</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --fg: #1a1d23;
+    --muted: #6b7280;
+    --card-bg: #ffffff;
+    --border: #e2e5ea;
+    --accent: #1800ad;
+    --accent-bg: #eeeafd;
+    --ok: #157a3d;
+    --ok-bg: #e6f6ec;
+    --warn: #9a6700;
+    --warn-bg: #fff3cd;
+    --stale: #b42318;
+    --stale-bg: #fdecea;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --fg: #e7e9ee;
+      --muted: #9aa1ac;
+      --card-bg: #1d2026;
+      --border: #2c3038;
+      --accent: #9c8cff;
+      --accent-bg: #2a2440;
+      --ok: #4ade80;
+      --ok-bg: #123321;
+      --warn: #f2c94c;
+      --warn-bg: #3a2f0d;
+      --stale: #ff8a80;
+      --stale-bg: #3a1616;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 640px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 32px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 4px;
+  }
+  .plugin-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .plugin-name {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .plugin-edit {
+    font-size: 13px;
+    color: var(--accent);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    text-decoration: underline;
+  }
+  #picker { display: none; gap: 8px; margin-bottom: 20px; }
+  #picker input {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+  #picker button {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .phase-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .description {
+    font-size: 16px;
+    margin: 14px 0 22px;
+    line-height: 1.4;
+  }
+  .clock {
+    font-family: var(--mono);
+    font-size: 48px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  .clock small {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+    margin-left: 10px;
+    letter-spacing: normal;
+  }
+  .subclock {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+  .bar-track {
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+  }
+  .banner {
+    margin-top: 20px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.stale { background: var(--stale-bg); color: var(--stale); }
+  .empty {
+    color: var(--muted);
+    font-size: 15px;
+  }
+  footer {
+    margin-top: 22px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>moodle-dev-tools</h1>
+    <div class="plugin-row">
+      <span class="plugin-name" id="pluginName">—</span>
+      <button class="plugin-edit" id="editBtn" type="button">trocar plugin</button>
+    </div>
+
+    <div id="picker">
+      <input id="pluginInput" type="text" placeholder="ex.: mod_playergroup" autocomplete="off">
+      <button id="pickBtn" type="button">ver</button>
+    </div>
+
+    <div id="body">
+      <p class="empty">Informe o Frankenstyle do plugin acima para começar a acompanhar.</p>
+    </div>
+
+    <footer>
+      Servido via Live Server a partir de <code>moodle-dev-tools/</code> — lê
+      <code>.progress/&lt;plugin&gt;.json</code>, escrito por <code>moodle-security-audit</code>
+      e <code>moodle-query-baseline</code>. Não funciona abrindo o arquivo direto
+      (<code>file://</code>) por causa de CORS no <code>fetch()</code>.
+    </footer>
+  </div>
+
+<script>
+(function () {
+  const POLL_MS = 700;
+  const TICK_MS = 100;
+  const STALE_AFTER_S = 45;
+
+  const params = new URLSearchParams(location.search);
+  let plugin = params.get('plugin') || localStorage.getItem('progress.plugin') || '';
+
+  const pluginNameEl = document.getElementById('pluginName');
+  const editBtn = document.getElementById('editBtn');
+  const picker = document.getElementById('picker');
+  const pluginInput = document.getElementById('pluginInput');
+  const pickBtn = document.getElementById('pickBtn');
+  const bodyEl = document.getElementById('body');
+
+  let lastState = null;
+  let pollTimer = null;
+  let tickTimer = null;
+
+  function setPlugin(name) {
+    plugin = name.trim();
+    if (!plugin) {
+      return;
+    }
+    localStorage.setItem('progress.plugin', plugin);
+    const url = new URL(location.href);
+    url.searchParams.set('plugin', plugin);
+    history.replaceState(null, '', url);
+    pluginNameEl.textContent = plugin;
+    picker.style.display = 'none';
+    lastState = null;
+    startPolling();
+  }
+
+  editBtn.addEventListener('click', () => {
+    pluginInput.value = plugin;
+    picker.style.display = 'flex';
+    pluginInput.focus();
+  });
+  pickBtn.addEventListener('click', () => setPlugin(pluginInput.value));
+  pluginInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      setPlugin(pluginInput.value);
+    }
+  });
+
+  function fmt(seconds) {
+    seconds = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    const mm = String(m).padStart(h ? 2 : 1, '0');
+    const ss = String(s).padStart(2, '0');
+    return h ? `${h}h${mm}m${ss}s` : `${mm}m${ss}s`;
+  }
+
+  function render() {
+    if (!lastState) {
+      return;
+    }
+    const st = lastState;
+    // Once finished, freeze both clocks at the moment finish() was recorded (received_at)
+    // instead of letting `now` keep advancing them — otherwise the "done" state would keep
+    // counting up forever after the underlying process has actually stopped.
+    const now = st.finished ? st.received_at : Date.now() / 1000;
+
+    const totalElapsed = now - st.total_start_epoch;
+    const phaseElapsed = now - st.phase_start_epoch;
+    const ageSinceUpdate = Date.now() / 1000 - st.received_at;
+
+    let progressRow = '';
+    if (st.total) {
+      const pct = Math.round((st.done / st.total) * 100);
+      let etaText = '';
+      if (st.eta_seconds != null && !st.finished) {
+        const etaNow = Math.max(0, st.eta_seconds - ageSinceUpdate);
+        etaText = `, ETA ~${fmt(etaNow)}`;
+      }
+      progressRow = `
+        <div class="progress-row">
+          <span>${st.done}/${st.total}${etaText}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <span>${pct}%</span>
+        </div>`;
+    }
+
+    let banner = '';
+    if (st.finished) {
+      banner = `<div class="banner ok">Concluído em ${fmt(totalElapsed)}.</div>`;
+    } else if (ageSinceUpdate > STALE_AFTER_S) {
+      banner = `<div class="banner stale">Sem atualização há ${fmt(ageSinceUpdate)}
+        — o processo pode ter travado ou terminado com erro.</div>`;
+    } else if (st.note) {
+      banner = `<div class="banner warn">${escapeHtml(st.note)}</div>`;
+    }
+
+    bodyEl.innerHTML = `
+      <span class="phase-badge">${escapeHtml(st.phase || '?')}</span>
+      <div class="description">${escapeHtml(st.description || '')}</div>
+      <div class="clock">${fmt(totalElapsed)}<small>total</small></div>
+      <div class="subclock">fase atual: ${fmt(phaseElapsed)}</div>
+      ${progressRow}
+      ${banner}
+    `;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+  }
+
+  async function poll() {
+    if (!plugin) {
+      return;
+    }
+    try {
+      const res = await fetch(`./.progress/${encodeURIComponent(plugin)}.json?t=${Date.now()}`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      lastState = { ...data, received_at: data.updated_epoch };
+      render();
+    } catch (err) {
+      bodyEl.innerHTML = `<p class="empty">Aguardando início do processo para
+        <strong>${escapeHtml(plugin)}</strong>… (${escapeHtml(err.message)})</p>`;
+    }
+  }
+
+  function startPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+    }
+    if (tickTimer) {
+      clearInterval(tickTimer);
+    }
+    poll();
+    pollTimer = setInterval(poll, POLL_MS);
+    tickTimer = setInterval(render, TICK_MS);
+  }
+
+  if (plugin) {
+    pluginNameEl.textContent = plugin;
+    startPolling();
+  } else {
+    editBtn.click();
+  }
+})();
+</script>
+</body>
+</html>

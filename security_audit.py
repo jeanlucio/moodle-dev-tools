@@ -31,8 +31,8 @@ from datetime import date
 from pathlib import Path
 
 from claude_cli import (
-    Clock, cache_path, cached, call_claude, extract_json, fmt_duration, hash_key,
-    run_parallel,
+    Clock, ProgressWriter, cache_path, cached, call_claude, extract_json, fmt_duration,
+    hash_key, run_parallel,
 )
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -41,6 +41,11 @@ PHPSTAN_BIN = TOOLS_DIR / 'phpstan' / 'vendor' / 'bin' / 'phpstan'
 MOODLE_ROOT = Path('/home/ubuntu/meu-moodle/html')
 MOODLE_DOCROOT = MOODLE_ROOT / 'public'
 CACHE_DIR = Path.home() / '.moodle-security-audit-cache'
+
+# Lives next to progress.html so the dashboard can poll it with a plain relative fetch()
+# when both are served from this same directory (e.g. via VS Code Live Server) — no need
+# to expose any path outside what is already being served.
+PROGRESS_DIR = TOOLS_DIR / '.progress'
 
 # Reports live inside the plugin, next to the code they describe, in a security-audit/
 # subfolder of .plans/ — the directory this ecosystem already uses for AI assistant
@@ -292,7 +297,8 @@ Mensagens:
 """
 
 
-def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, use_cache):
+def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
+                    clock=None):
     """Classify PHPStan messages in chunks; returns messages with a 'verdict' key."""
     if not messages:
         return []
@@ -327,7 +333,7 @@ def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, 
                      use_cache, compute)
 
     results = run_parallel(chunks, jobs, run_chunk, 'bloco',
-                           detail_fn=lambda r: f'{len(r)} classificado(s)')
+                           detail_fn=lambda r: f'{len(r)} classificado(s)', clock=clock)
     triaged = []
     for result in results:
         triaged.extend(result)
@@ -408,7 +414,8 @@ def _batch_key(plugin_dir, batch):
     return hash_key(PROMPT_VERSION, contents)
 
 
-def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use_cache):
+def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
+                 clock=None):
     def run_batch(batch):
         def compute():
             listing = '\n'.join(f'- {e["rel"]} ({e["lines"]} linhas)' for e in batch)
@@ -424,7 +431,7 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
                      use_cache, compute)
 
     results = run_parallel(batches, jobs, run_batch, 'lote',
-                           detail_fn=lambda r: f'{len(r)} candidato(s)')
+                           detail_fn=lambda r: f'{len(r)} candidato(s)', clock=clock)
     all_findings = []
     for result in results:
         all_findings.extend(result)
@@ -452,7 +459,8 @@ Achado:
 """
 
 
-def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs, use_cache):
+def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
+                    clock=None):
     """Confirm or refute each candidate independently.
 
     Deliberately one call per candidate rather than batched: the sceptical, focused reading
@@ -510,7 +518,7 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
         title = (finding.get('title') or '')[:40]
         return f'{finding.get("verdict")} — {title}'
 
-    return run_parallel(findings, jobs, run_one, 'achado', detail_fn=detail)
+    return run_parallel(findings, jobs, run_one, 'achado', detail_fn=detail, clock=clock)
 
 
 # --------------------------------------------------------------------------- #
@@ -998,7 +1006,8 @@ def main():
     print(f'Auditando {franken} — {inventory["files_scanned"]} arquivos, '
           f'{inventory["lines_scanned"]} linhas')
     print('')
-    clock = Clock()
+    progress = ProgressWriter(PROGRESS_DIR / f'{franken}.json')
+    clock = Clock(progress=progress)
 
     # Phase A
     clock.phase('A', f'PHPStan nível {args.phpstan_level}')
@@ -1019,7 +1028,8 @@ def main():
     if phpstan_msgs:
         clock.phase('B', 'Triagem das mensagens do PHPStan')
         triaged = triage_phpstan(phpstan_msgs, plugin_dir, franken, args.model,
-                                 args.fallback_model, rules, args.jobs, use_cache)
+                                 args.fallback_model, rules, args.jobs, use_cache,
+                                 clock=clock)
         real = sum(1 for m in triaged if m['verdict'] in ('real_bug', 'security_relevant'))
         clock.done(f'{real} bug(s) real(is), {len(triaged) - real} idioma Moodle')
 
@@ -1027,7 +1037,8 @@ def main():
     batches = build_batches(scan_files, args.batch_lines)
     clock.phase('C', f'Varredura semântica em {len(batches)} lote(s)')
     all_candidates = scan_batches(batches, plugin_dir, franken, args.model,
-                                  args.fallback_model, rules, args.jobs, use_cache)
+                                  args.fallback_model, rules, args.jobs, use_cache,
+                                  clock=clock)
     # code_quality candidates (N+1 that doesn't scale with attacker input) skip Phase D
     # entirely: verify_findings()'s VERIFY_PROMPT is framed around exploitability, which
     # doesn't apply to a performance observation, and it would be quota spent asking an
@@ -1040,7 +1051,8 @@ def main():
     if candidates and not args.no_verify:
         clock.phase('D', f'Verificando {len(candidates)} candidato(s)')
         candidates = verify_findings(candidates, plugin_dir, franken, args.model,
-                                     args.fallback_model, rules, args.jobs, use_cache)
+                                     args.fallback_model, rules, args.jobs, use_cache,
+                                     clock=clock)
         confirmed = [f for f in candidates if f.get('verdict') == 'confirmed']
         refuted = [f for f in candidates if f.get('verdict') != 'confirmed']
         clock.done(f'{len(confirmed)} confirmado(s), {len(refuted)} descartado(s)')
@@ -1078,6 +1090,7 @@ def main():
     print('')
     print(f'Relatório: {report_path}')
     print(f'Tempo total: {fmt_duration(clock.total())}')
+    clock.finish()
     return 0
 
 

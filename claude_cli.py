@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 
 # Headless CLI calls include Node/model startup overhead on top of the actual generation.
@@ -30,13 +31,48 @@ def fmt_duration(seconds):
     return f'{minutes}m{secs:02d}s'
 
 
+class ProgressWriter:
+    """Writes live progress state to a JSON file for progress.html to poll.
+
+    Best-effort and silent on failure: a broken progress file must never break the tool it
+    is reporting on. Writes are atomic (temp file + rename) so the dashboard never reads a
+    half-written file, and thread-safe since run_parallel() ticks from worker threads.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self._lock = threading.Lock()
+
+    def write(self, **fields):
+        with self._lock:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_suffix(self.path.suffix + '.tmp')
+                payload = {'updated_epoch': time.time(), **fields}
+                tmp.write_text(json.dumps(payload, ensure_ascii=False))
+                tmp.replace(self.path)
+            except OSError:
+                pass
+
+
 class Clock:
     """Elapsed-time reporting. Purely local — costs nothing, and a run can last long
-    enough that silence is indistinguishable from a hang."""
+    enough that silence is indistinguishable from a hang.
 
-    def __init__(self):
+    When `progress` (a ProgressWriter) is given, every phase boundary and every
+    run_parallel() completion also writes live state to a JSON file — this is what lets
+    progress.html show a real ticking clock even while a single long AI call (which prints
+    nothing until it returns) is in flight, instead of going silent between print()s.
+    """
+
+    def __init__(self, progress=None):
         self.start = time.monotonic()
+        self.start_epoch = time.time()
         self.phase_start = self.start
+        self.phase_start_epoch = self.start_epoch
+        self.progress = progress
+        self.tag = ''
+        self.description = ''
 
     def total(self):
         return time.monotonic() - self.start
@@ -44,11 +80,51 @@ class Clock:
     def phase(self, tag, description):
         print(f'[{tag}] {description}... (decorrido {fmt_duration(self.total())})')
         self.phase_start = time.monotonic()
+        self.phase_start_epoch = time.time()
+        self.tag = tag
+        self.description = description
+        self.tick()
 
     def done(self, note=''):
         elapsed = time.monotonic() - self.phase_start
         suffix = f' — {note}' if note else ''
         print(f'  concluída em {fmt_duration(elapsed)}{suffix}')
+        self.tick(note=note)
+
+    def tick(self, done=None, total=None, eta_seconds=None, note=''):
+        """Refreshes the progress file with the current phase state, if one is configured.
+
+        Called on every phase() and done() boundary, and by run_parallel() on every item
+        completion — so done/total/eta_seconds stay fresh mid-phase, not just at its start
+        and end.
+        """
+        if not self.progress:
+            return
+        self.progress.write(
+            phase=self.tag,
+            description=self.description,
+            total_start_epoch=self.start_epoch,
+            phase_start_epoch=self.phase_start_epoch,
+            done=done,
+            total=total,
+            eta_seconds=eta_seconds,
+            note=note,
+            finished=False,
+        )
+
+    def finish(self):
+        """Marks the run as finished, so the dashboard shows a final state and stops
+        expecting further ticks."""
+        if not self.progress:
+            return
+        self.progress.write(
+            phase=self.tag,
+            description=self.description,
+            total_start_epoch=self.start_epoch,
+            phase_start_epoch=self.phase_start_epoch,
+            done=None, total=None, eta_seconds=None, note='',
+            finished=True,
+        )
 
 
 def _subscription_env():
@@ -122,7 +198,7 @@ def call_claude(prompt, cwd, model, fallback_model, system_prompt='', allow_tool
 #  Parallel execution with completion-order progress                           #
 # --------------------------------------------------------------------------- #
 
-def run_parallel(items, jobs, fn, label, detail_fn=None):
+def run_parallel(items, jobs, fn, label, detail_fn=None, clock=None):
     """Run fn(item) over items in a thread pool, printing progress AS EACH ONE FINISHES.
 
     pool.map() yields in submission order — if item 1 was slow, items 2 and 3 sat
@@ -137,6 +213,10 @@ def run_parallel(items, jobs, fn, label, detail_fn=None):
     Results are returned in the ORIGINAL item order regardless of completion order, since
     callers (report ordering, cache bookkeeping) depend on it — only the printed progress
     is completion-ordered.
+
+    `clock` (optional): when given, its tick() is called on every completion with the same
+    done/total/eta_seconds, so progress.html sees per-item progress mid-phase, not just the
+    phase boundaries.
     """
     n = len(items)
     if n == 0:
@@ -155,12 +235,16 @@ def run_parallel(items, jobs, fn, label, detail_fn=None):
 
             elapsed = time.monotonic() - start
             eta = ''
+            eta_seconds = None
             if done < n:
                 avg_per_item = elapsed / done
                 remaining_wall = (n - done) * avg_per_item / min(jobs, n)
                 eta = f', ETA ~{fmt_duration(remaining_wall)}'
+                eta_seconds = remaining_wall
             detail = f' — {detail_fn(result)}' if detail_fn else ''
             print(f'  {label} {done}/{n}{detail} (decorrido {fmt_duration(elapsed)}{eta})')
+            if clock:
+                clock.tick(done=done, total=n, eta_seconds=eta_seconds)
 
     return results
 
