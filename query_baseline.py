@@ -65,7 +65,12 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 # --------------------------------------------------------------------------- #
 
 def resolve_plugin(plugin_arg):
-    """'blocks/playerhud' or 'html/public/filter/playerhud' -> ('filter/playerhud', 'filter_playerhud')."""
+    """'blocks/playerhud' or 'html/public/filter/playerhud' -> ('filter/playerhud', 'filter_playerhud').
+
+    Also handles Moodle's fixed-subdirectory plugin types, where every instance lives under
+    an extra directory level that is NOT part of the Frankenstyle name, e.g.
+    'availability/condition/playerhud' -> 'availability_playerhud'.
+    """
     plugin = plugin_arg.strip()
     for prefix in ('./', 'html/public/', 'public/'):
         if plugin.startswith(prefix):
@@ -75,6 +80,15 @@ def resolve_plugin(plugin_arg):
     if not name:
         raise ValueError('informe o plugin como tipo/nome (ex.: blocks/playerhud)')
     plugin_type = 'block' if typedir == 'blocks' else typedir
+    fixed_subdirs = {'availability': 'condition'}
+    subdir = fixed_subdirs.get(typedir)
+    if subdir and name.startswith(f'{subdir}/'):
+        name = name[len(subdir) + 1:]
+    if '/' in name:
+        raise ValueError(
+            f"caminho de plugin com nivel extra nao reconhecido: '{plugin}' "
+            f"(resolve_plugin so conhece tipo/nome e os subdiretorios fixos {sorted(fixed_subdirs)})"
+        )
     return plugin, f'{plugin_type}_{name}'
 
 
