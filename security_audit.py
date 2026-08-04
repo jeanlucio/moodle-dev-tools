@@ -19,8 +19,6 @@ Usage: security_audit.py <plugin_abs_dir> [options]  (normally via moodle-securi
 """
 
 import argparse
-import concurrent.futures
-import hashlib
 import json
 import os
 import re
@@ -31,6 +29,11 @@ import tempfile
 import time
 from datetime import date
 from pathlib import Path
+
+from claude_cli import (
+    Clock, cache_path, cached, call_claude, extract_json, fmt_duration, hash_key,
+    run_parallel,
+)
 
 TOOLS_DIR = Path(__file__).resolve().parent
 RULES_FILE = TOOLS_DIR / 'security-rules.md'
@@ -72,176 +75,6 @@ SKIP_DIRS = {'amd/build', 'node_modules', 'vendor', '.git', 'docs'}
 METADATA_ONLY_DIRS = {'tests', 'lang'}
 
 SCAN_EXTENSIONS = {'.php', '.js', '.mustache', '.xml', '.css'}
-
-
-# --------------------------------------------------------------------------- #
-#  Claude CLI plumbing                                                         #
-# --------------------------------------------------------------------------- #
-
-def fmt_duration(seconds):
-    """Compact mm:ss / h:mm:ss, for a run that can last an hour."""
-    seconds = int(seconds)
-    hours, rest = divmod(seconds, 3600)
-    minutes, secs = divmod(rest, 60)
-    if hours:
-        return f'{hours}h{minutes:02d}m{secs:02d}s'
-    return f'{minutes}m{secs:02d}s'
-
-
-class Clock:
-    """Elapsed-time reporting. Purely local — costs nothing, and an audit runs long
-    enough that silence is indistinguishable from a hang."""
-
-    def __init__(self):
-        self.start = time.monotonic()
-        self.phase_start = self.start
-
-    def total(self):
-        return time.monotonic() - self.start
-
-    def phase(self, tag, description):
-        print(f'[{tag}] {description}... (decorrido {fmt_duration(self.total())})')
-        self.phase_start = time.monotonic()
-
-    def done(self, note=''):
-        elapsed = time.monotonic() - self.phase_start
-        suffix = f' — {note}' if note else ''
-        print(f'  concluída em {fmt_duration(elapsed)}{suffix}')
-
-
-def _subscription_env():
-    """Environment for the CLI child, with anything that would bill per token removed."""
-    return {
-        k: v for k, v in os.environ.items()
-        if k not in ('ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX')
-    }
-
-
-def _run_claude(prompt, cwd, model, system_prompt, allow_tools):
-    """One headless CLI call. Returns the assistant's text, or raises RuntimeError."""
-    cmd = [
-        'claude', '-p',
-        '--model', model,
-        '--output-format', 'json',
-        '--no-session-persistence',
-        # Skips CLAUDE.md, skills, hooks and MCP servers in the child session. The user's
-        # global CLAUDE.md is ~18k tokens and would be re-sent on every single call, for no
-        # benefit: the rules this audit needs are passed explicitly via --append-system-prompt.
-        # Unlike --bare, this leaves auth untouched, so subscription billing still applies.
-        '--safe-mode',
-    ]
-    if allow_tools:
-        # Read-only tool set: the audit is structurally incapable of modifying the plugin.
-        cmd += ['--tools', 'Read,Grep,Glob']
-    else:
-        cmd += ['--tools', '']
-    if system_prompt:
-        cmd += ['--append-system-prompt', system_prompt]
-
-    result = subprocess.run(
-        cmd, input=prompt, capture_output=True, text=True,
-        timeout=CLAUDE_TIMEOUT, cwd=str(cwd), env=_subscription_env(),
-    )
-    if result.returncode != 0:
-        err = (result.stderr or result.stdout or '').strip().split('\n')[0]
-        raise RuntimeError(err or f'exit {result.returncode}')
-
-    try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise RuntimeError('resposta do CLI não é JSON')
-
-    if envelope.get('is_error'):
-        raise RuntimeError(str(envelope.get('result'))[:200])
-    text = envelope.get('result')
-    if not text:
-        raise RuntimeError('resposta vazia')
-    return text
-
-
-def call_claude(prompt, cwd, model, fallback_model, system_prompt='', allow_tools=True):
-    """Run a call on `model`, falling back to `fallback_model` on ANY failure.
-
-    The CLI's own --fallback-model only covers "overloaded or not available"; exhausted
-    model credits surface as a plain failure, so the retry is handled here instead.
-    """
-    try:
-        return _run_claude(prompt, cwd, model, system_prompt, allow_tools)
-    except Exception as first:
-        if not fallback_model or fallback_model == model:
-            raise RuntimeError(f'{model}: {first}')
-        try:
-            return _run_claude(prompt, cwd, fallback_model, system_prompt, allow_tools)
-        except Exception as second:
-            raise RuntimeError(f'{model}: {first}; {fallback_model}: {second}')
-
-
-# --------------------------------------------------------------------------- #
-#  Parallel execution with completion-order progress                           #
-# --------------------------------------------------------------------------- #
-
-def run_parallel(items, jobs, fn, label, detail_fn=None):
-    """Run fn(item) over items in a thread pool, printing progress AS EACH ONE FINISHES.
-
-    Earlier versions used pool.map(), which yields in submission order — if item 1 was
-    slow, items 2 and 3 sat done-but-silent until it caught up, and a slow batch looked
-    indistinguishable from a hang. as_completed() reports true completion order instead.
-
-    The ETA is throughput extrapolated from what has completed so far (elapsed / done),
-    scaled by remaining work under the same parallelism. It is a moving estimate, not a
-    guarantee: it is unreliable on the very first completion (n=1 sample) and self-corrects
-    as more items finish, exactly like any progress bar built on observed throughput.
-
-    Results are returned in the ORIGINAL item order regardless of completion order, since
-    callers (report ordering, cache bookkeeping) depend on it — only the printed progress
-    is completion-ordered.
-    """
-    n = len(items)
-    if n == 0:
-        return []
-
-    results = [None] * n
-    start = time.monotonic()
-    done = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        future_to_index = {pool.submit(fn, item): i for i, item in enumerate(items)}
-        for future in concurrent.futures.as_completed(future_to_index):
-            index = future_to_index[future]
-            result = future.result()
-            results[index] = result
-            done += 1
-
-            elapsed = time.monotonic() - start
-            eta = ''
-            if done < n:
-                avg_per_item = elapsed / done
-                remaining_wall = (n - done) * avg_per_item / min(jobs, n)
-                eta = f', ETA ~{fmt_duration(remaining_wall)}'
-            detail = f' — {detail_fn(result)}' if detail_fn else ''
-            print(f'  {label} {done}/{n}{detail} (decorrido {fmt_duration(elapsed)}{eta})')
-
-    return results
-
-
-def extract_json(text):
-    """Pull the first JSON array/object out of a model response.
-
-    Defensive on purpose: responses arrive bare, fenced, or with a sentence in front,
-    and a whole batch should not be lost to a stray "Here are the findings:".
-    """
-    text = text.strip()
-    fenced = re.search(r'```(?:json)?\s*(.*?)```', text, re.S)
-    if fenced:
-        text = fenced.group(1).strip()
-    for opener, closer in (('[', ']'), ('{', '}')):
-        start = text.find(opener)
-        end = text.rfind(closer)
-        if start != -1 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                continue
-    raise ValueError('nenhum JSON válido na resposta')
 
 
 # --------------------------------------------------------------------------- #
@@ -490,7 +323,8 @@ def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, 
                 out.append(entry)
             return out
 
-        return cached(franken, 'triage', _hash_key(chunk), use_cache, compute)
+        return cached(CACHE_DIR, franken, 'triage', hash_key(PROMPT_VERSION, chunk),
+                     use_cache, compute)
 
     results = run_parallel(chunks, jobs, run_chunk, 'bloco',
                            detail_fn=lambda r: f'{len(r)} classificado(s)')
@@ -514,12 +348,23 @@ cadeia de chamada é o que separa achado real de suposição.
 
 Seja conservador: só reporte o que tiver certeza. Nada de estilo, PHPDoc ou i18n.
 
+Enquanto lê, também sinalize antipadrão N+1 ($DB->get_record/get_records/get_field dentro de
+foreach/for/while) — mas classifique com cuidado, seguindo a regra L3-DOS-N1 do catálogo:
+- Na IMENSA maioria dos casos é "finding_type": "code_quality" — não é achado de segurança,
+  vai para a seção de performance do relatório e NÃO afeta a nota.
+- Vira "finding_type": "security", "category": "dos" (achado de verdade, com severidade)
+  APENAS quando o número de iterações do loop é controlado por entrada não confiável e sem
+  limite superior (ex.: lista enviada pelo usuário, resultado de uma busca sem paginação) —
+  ou seja, quando um atacante consegue fazer o custo escalar por conta própria, não só
+  quando o código é ineficiente.
+
 Responda APENAS com um array JSON (vazio se nada encontrado):
 [{
   "title": "título curto",
+  "finding_type": "security ou code_quality — code_quality só para N+1 não-escalável",
   "severity": "critical|high|medium|low|info",
-  "category": "uma das 15 categorias oficiais do catálogo",
-  "rule_id": "id da regra do catálogo, ex. L2-XSS-1",
+  "category": "uma das 15 categorias oficiais do catálogo, ou \"n_plus_one\" quando finding_type=code_quality",
+  "rule_id": "id da regra do catálogo, ex. L2-XSS-1 ou L3-DOS-N1",
   "file": "caminho/relativo.php",
   "line": 123,
   "extra_locations": [{"file": "outro.mustache", "line": 95}],
@@ -552,43 +397,6 @@ def build_batches(scan_files, batch_lines):
     return batches
 
 
-def _cache_path(franken, phase, key):
-    return CACHE_DIR / franken / phase / f'{key}.json'
-
-
-def cached(franken, phase, key, use_cache, compute):
-    """Run `compute` unless a cached result for this exact input already exists.
-
-    Applied to every AI phase, not just the scan: an audit is 20+ calls and a run that dies
-    partway (spend limit, network, Ctrl-C) must resume rather than re-pay for work already
-    done. Anything not cached here is money spent twice on the next attempt.
-    """
-    if not use_cache:
-        return compute()
-    path = _cache_path(franken, phase, key)
-    if path.is_file():
-        try:
-            return json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            pass
-    result = compute()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, ensure_ascii=False))
-    except OSError:
-        pass
-    return result
-
-
-def _hash_key(*parts):
-    """Stable short hash of the inputs that decide a call's result."""
-    digest = hashlib.sha256()
-    digest.update(PROMPT_VERSION.encode())
-    for part in parts:
-        digest.update(repr(part).encode('utf-8', errors='replace'))
-    return digest.hexdigest()[:16]
-
-
 def _batch_key(plugin_dir, batch):
     """Content hash, so fixing one file only invalidates the batches containing it."""
     contents = []
@@ -597,7 +405,7 @@ def _batch_key(plugin_dir, batch):
             contents.append((entry['rel'], (plugin_dir / entry['rel']).read_bytes()))
         except OSError:
             contents.append((entry['rel'], b''))
-    return _hash_key(contents)
+    return hash_key(PROMPT_VERSION, contents)
 
 
 def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use_cache):
@@ -612,7 +420,8 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
                 print(f'  aviso: um lote falhou ({exc})', file=sys.stderr)
                 return []
 
-        return cached(franken, 'scan', _batch_key(plugin_dir, batch), use_cache, compute)
+        return cached(CACHE_DIR, franken, 'scan', _batch_key(plugin_dir, batch),
+                     use_cache, compute)
 
     results = run_parallel(batches, jobs, run_batch, 'lote',
                            detail_fn=lambda r: f'{len(r)} candidato(s)')
@@ -671,9 +480,9 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
 
         # A failed verification is not cached: the next run should retry it, not inherit
         # a refusal caused by a spend limit or a network blip.
-        key = _hash_key(finding.get('title'), finding.get('file'), finding.get('line'),
-                        finding.get('description'))
-        path = _cache_path(franken, 'verify', key)
+        key = hash_key(PROMPT_VERSION, finding.get('title'), finding.get('file'),
+                       finding.get('line'), finding.get('description'))
+        path = cache_path(CACHE_DIR, franken, 'verify', key)
         result = None
         if use_cache and path.is_file():
             try:
@@ -1027,6 +836,19 @@ def render_report(ctx):
             ' omitida(s).*')
         add('')
 
+    # ---- Achados de performance ---------------------------------------------
+    quality_findings = ctx.get('quality_findings') or []
+    if quality_findings:
+        add('## Achados de performance')
+        add('')
+        add('Seção separada de propósito: **não afetam a nota de segurança**. Vêm direto da'
+            ' varredura semântica (Fase C), sem passar pelo passe de verificação da Fase D'
+            ' — esse passe é sobre exploitabilidade, que não se aplica a uma observação de'
+            ' performance. Trate como sinal a conferir, não como confirmado.')
+        add('')
+        for index, finding in enumerate(quality_findings, 1):
+            _render_finding(add, index, finding)
+
     # ---- Descartados ------------------------------------------------------
     if refuted:
         add('## Descartados na verificação')
@@ -1148,6 +970,9 @@ def main():
         ctx = json.loads(source.read_text(encoding='utf-8'))
         # Snippets are re-extracted from disk so the report always matches the current file.
         ctx['confirmed'] = attach_snippets(ctx.get('confirmed', []), plugin_dir)
+        # .get(..., []): older JSON files predate the quality_findings split and simply
+        # don't have the key — treat that as "none", not an error.
+        ctx['quality_findings'] = attach_snippets(ctx.get('quality_findings', []), plugin_dir)
         if not ctx.get('narrative'):
             print('narrativa ausente no JSON — gerando (1 chamada)...')
             ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
@@ -1201,9 +1026,15 @@ def main():
     # Phase C
     batches = build_batches(scan_files, args.batch_lines)
     clock.phase('C', f'Varredura semântica em {len(batches)} lote(s)')
-    candidates = scan_batches(batches, plugin_dir, franken, args.model,
-                              args.fallback_model, rules, args.jobs, use_cache)
-    clock.done(f'{len(candidates)} candidato(s)')
+    all_candidates = scan_batches(batches, plugin_dir, franken, args.model,
+                                  args.fallback_model, rules, args.jobs, use_cache)
+    # code_quality candidates (N+1 that doesn't scale with attacker input) skip Phase D
+    # entirely: verify_findings()'s VERIFY_PROMPT is framed around exploitability, which
+    # doesn't apply to a performance observation, and it would be quota spent asking an
+    # adversarial-exploit question about something that was never a security claim.
+    candidates = [f for f in all_candidates if f.get('finding_type') != 'code_quality']
+    quality_findings = [f for f in all_candidates if f.get('finding_type') == 'code_quality']
+    clock.done(f'{len(candidates)} candidato(s) de segurança, {len(quality_findings)} de performance')
 
     # Phase D
     if candidates and not args.no_verify:
@@ -1218,10 +1049,12 @@ def main():
 
     # Phase E
     confirmed = attach_snippets(confirmed, plugin_dir)
+    quality_findings = attach_snippets(quality_findings, plugin_dir)
     grade, grade_reason = compute_grade(confirmed)
     ctx = {
         'franken': franken, 'version': version, 'inventory': inventory,
         'confirmed': confirmed, 'refuted': refuted, 'phpstan': triaged,
+        'quality_findings': quality_findings,
         'libs': libs, 'grade': grade, 'grade_reason': grade_reason,
     }
     clock.phase('E', 'Gerando relatório')

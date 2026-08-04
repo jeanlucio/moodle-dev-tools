@@ -704,6 +704,89 @@ pre-commit faz o check leve de `@template` + chaves balanceadas.
 
 ---
 
+## Regressão de queries por teste — `moodle-query-baseline`
+
+Complementa o `moodle-security-audit`: a Fase C dele só **adivinha** N+1 lendo código (uma
+query dentro de um loop pode disparar 3 vezes, inofensivo, ou 300, real) — este mede de
+verdade. Roda a suíte PHPUnit que o plugin **já tem**, sem alterar nenhum teste, instrumentada
+para contar `$DB->perf_get_queries()` por teste, e compara contra um baseline salvo. O valor
+não está em olhar o número isolado (setUp()/fixture já custam queries, o total absoluto não
+diz nada sozinho) — está em **detectar regressão**: um teste que sempre disparou 4 queries e
+passa a disparar 40.
+
+```bash
+moodle-query-baseline <tipo/nome> [opções]
+```
+
+### Mecanismo
+
+A contagem vem de `query_count_extension.php`, uma extensão PHPUnit 11
+(`PHPUnit\Runner\Extension\Extension`) registrada via `$facade->registerSubscriber(...)` — o
+mesmo mecanismo que o próprio Moodle usa em
+`lib/tests/classes/phpunit/moodle_extension.php`. Ela tira um snapshot de
+`perf_get_queries()` logo após `Prepared` (já passou do `setUp()`) e outro em `Finished`,
+grava o delta por teste num JSON ao final da suíte inteira (`TestRunner\Finished`). Como o
+XSD do `<extensions><bootstrap>` só aceita atributo `class` (sem `file` — PHPUnit nunca dá
+`require` na classe, só `class_exists()`), o próprio arquivo da extensão faz o `require_once`
+do bootstrap do Moodle no topo e é apontado como o `bootstrap=` raiz do `phpunit.xml`
+temporário — um arquivo faz as duas coisas.
+
+Cada rodada executa a suíte **duas vezes** e descarta a primeira: a primeira execução depois
+de `phpunit init` mostra um aumento fixo de +6 queries em boa parte dos testes comparado à
+segunda (artefato de aquecimento de cache, não instabilidade) — a segunda e a terceira rodada
+batem exatamente. Sem esse descarte, todo plugin apareceria com falsos suspeitos na primeira
+vez que a ferramenta rodasse nele.
+
+### Pipeline
+
+| Fase | O que faz |
+|---|---|
+| **A** | Instrumentação determinística: roda a suíte (aquecimento + medição), sem IA |
+| **B** | Diff determinístico contra o baseline salvo: `novo` / `sem_mudança` / `suspeito` |
+| **C** | Triagem por IA — só dos testes que a Fase B marcou `suspeito`, não do plugin inteiro |
+| **D** | Relatório com a tabela completa + atualização opcional do baseline |
+
+Um teste só vira `suspeito` quando o aumento passa **os dois** filtros ao mesmo tempo:
+`--threshold-pct` (percentual) **e** `--min-queries` (valor absoluto) — evita ruído de teste
+pequeno (2→3 queries já é +50%, mas irrelevante).
+
+### O baseline nunca muda sozinho
+
+`~/.moodle-query-baseline/<frankenstyle>.json` só é escrito com `--accept` explícito, depois
+de você olhar o relatório. Sem a flag, a rodada é sempre só leitura — inclusive a primeira vez
+que a ferramenta roda num plugin sem baseline nenhum ("novo" para todos, nada para comparar
+ainda). Esse é o ponto central do desenho: uma regressão lenta (+1 query por commit) nunca
+dispara alerta se o baseline se atualiza sozinho a cada rodada.
+
+### Opções
+
+| Flag | Padrão | Efeito |
+|---|---|---|
+| `--min-queries N` | `10` | Ignora testes abaixo disso, mesmo com % alto |
+| `--threshold-pct N` | `50` | % de aumento para marcar como suspeito |
+| `--no-triage` | — | Só a tabela de números/deltas, sem gastar cota da assinatura |
+| `--accept` | — | Grava os números desta rodada como novo baseline |
+| `--model` | `claude-fable-5` | Modelo primário da triagem |
+| `--fallback-model` | `claude-opus-5` | Usado se o primário falhar |
+| `--jobs N` | `5` | Chamadas de triagem em paralelo |
+| `--no-cache` | — | Ignora o cache de triagem |
+
+### Relatório e cache
+
+Relatório em `<plugin>/.plans/query-baseline/<frankenstyle>-<AAAA-MM-DD>-<HHMMSS>.md` — mesma
+pasta `.plans/` (com `.gitignore` garantido) do `moodle-security-audit`, subpasta própria. A
+tabela completa lista **todo** teste, não só os suspeitos; a seção de triagem só aparece
+quando há suspeito, com o veredito (`n_plus_one_provavel` / `esperado` / `indeterminado`) e a
+justificativa citando o código lido pela IA. Cache de triagem em
+`~/.moodle-query-baseline-cache/`, reaproveitando a mesma infraestrutura de `claude_cli.py`
+usada pelo `moodle-security-audit` (mesmo `--safe-mode`, mesma remoção de
+`ANTHROPIC_API_KEY` do ambiente do processo filho).
+
+A ferramenta só lê o plugin auditado — a suíte roda no container, sem tocar o repositório — e
+não faz parte do ZIP do Plugin Directory, é ferramenta de bancada como as demais desta seção.
+
+---
+
 ## Ferramentas de manutenção de código
 
 ### sortlang.php — ordenação de strings de idioma

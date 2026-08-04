@@ -115,6 +115,35 @@ o guia oficial — quando as duas falarem do mesmo assunto, esta prevalece por s
 - **L2-CDN-1** — Biblioteca de terceiro empacotada no plugin e declarada em
   `thirdpartylibs.xml`; nunca carregada de CDN em runtime. (Endpoint de *serviço* — YouTube,
   API de LLM — é outra coisa e é permitido, mas exige declaração no Privacy Provider.)
+- **L2-AVAIL-1** — Toda condição `availability_*` deve honrar `$not` num único ponto de
+  saída: `\core_availability\condition::check_available()` devolve `is_available($not, ...)`
+  literalmente, sem inverter — quem inverte é a própria condição. Padrão certo:
+  `$allow = <checagem>; if ($not) { $allow = !$allow; } return $allow;`. `return` de dentro
+  de cada branch é o bug clássico: `$not` vira letra morta em toda subclasse, e uma
+  restrição "aluno NÃO pode" libera exatamente quem deveria bloquear. `get_description()`
+  precisa do texto negado correspondente (`requires_item` vs `requires_not_item`), nunca a
+  frase afirmativa disfarçada. Cobertura de teste com `$not=true` é obrigatória para cada
+  subtipo — sem ela, nem line coverage nem mutation testing pegam a ausência do `if`.
+- **L2-AVAIL-2** — `get_description()` de uma condição `availability_*` não deve chamar
+  `format_string()`/`format_text()` diretamente sobre nome/texto vindo do banco. O core
+  documenta que o ambiente (`$PAGE`/modinfo) pode não estar pronto no momento em que
+  `get_description()` roda, e por isso `\core_availability\condition` expõe os marcadores
+  adiados `description_format_string()`/`description_callback()`, resolvidos depois por
+  `info::format_info()`. Referência: `availability_profile` usa
+  `description_format_string()`, `availability_grade` usa `description_callback()`. Chamar
+  `format_string()` na hora não é XSS (a limpeza acontece igual), é quebra de contrato —
+  fica frágil a mudanças em quando/como a descrição é coletada (render em lote, restore).
+  Severidade `low`, categoria `insecure_config_management`.
+- **L2-COUPLE-1** — Plugin com dependência forte declarada (`$plugin->dependencies` no
+  `version.php`) que lê tabelas do plugin companheiro direto por SQL, em vez de por uma API
+  publicada dele, não é falha de segurança — é achado arquitetural (severidade `info`,
+  categoria `insecure_config_management`), desde que toda consulta já esteja parametrizada
+  e escopada por instância. Reporte quando: (a) existe função pública equivalente que o
+  código *não* usa para alguns campos mas usa para outros (inconsistência vale a pena
+  registrar), ou (b) nenhuma API existe e o plugin lê 3+ tabelas internas do companheiro. Não
+  reporte como achado de segurança — é nota de manutenibilidade sobre fragilidade a mudança
+  de schema no plugin companheiro, com o `is_available()`/fallback correspondente checado
+  para confirmar que falha de forma segura (fail-closed) se a tabela/coluna mudar.
 
 ---
 
@@ -154,6 +183,24 @@ Não nomeadas pelas camadas acima, mas reais nestes plugins (o relatório públi
   segura para um plugin com piso 4.5. O alias `\moodle_text_filter` serve apenas a plugins
   escritos para **4.4 ou anterior** — para um plugin 4.5+ ele não agrega compatibilidade
   nenhuma, só dívida.
+
+- **L3-DOS-N1** — Antipadrão N+1 (`$DB->get_record`/`get_records`/`get_field` dentro de
+  `foreach`/`for`/`while`) **não é achado de segurança na maioria dos casos** — é qualidade
+  de código/performance, categoria `finding_type: code_quality`, vai para a seção própria do
+  relatório e **não afeta a nota**. Vira achado de segurança de verdade
+  (`finding_type: security`, categoria `dos`) só quando o número de iterações é controlado
+  por entrada não confiável e sem limite superior (lista enviada pelo usuário, resultado de
+  busca sem paginação) — aí um atacante consegue escalar o custo por conta própria, não é só
+  ineficiência. A distinção é a mesma de `L3-RACE-1`: o que importa é se existe caminho de
+  exploração concreto, não se o código é subótimo.
+
+  Não confie em PHPStan pra isso — nível 6-9 não detecta N+1 (não é erro de tipo), então essa
+  regra só é aplicável na Fase C (varredura semântica), nunca na triagem do PHPStan.
+  Referência de por que isso importa mesmo sendo raramente reportável: os relatórios
+  públicos do MDLShield mencionam N+1 como **ponto forte** quando o plugin evita
+  corretamente (bulk-loading com `preload_data()`-style), nunca como achado com severidade
+  — reforça que o padrão da indústria também trata isso como qualidade, não segurança, salvo
+  a exceção acima.
 
 ---
 
