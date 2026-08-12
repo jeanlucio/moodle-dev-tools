@@ -9,7 +9,11 @@ Pipeline (see README "Auditoria de segurança"):
   C. AI semantic scan, batched, with read-only tools so the agent can follow call
      chains beyond its own batch
   D. AI verification pass — every candidate must be confirmed exploitable or refuted
-  E. deterministic grade + Markdown report
+  E. AI dedup pass — batches (C) and per-candidate verification (D) run in isolation
+     from each other, so the same root cause found from two different angles (two
+     files in different batches, or the same file read twice) survives as two
+     separate findings unless something looks at the confirmed list as a whole
+  F. deterministic grade + Markdown report
 
 Every AI call runs through the local `claude` CLI against the Claude Code subscription;
 API keys are stripped from the child environment so a stray ANTHROPIC_API_KEY can never
@@ -522,7 +526,126 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
 
 
 # --------------------------------------------------------------------------- #
-#  Phase E — grade and report                                                  #
+#  Phase E — dedup                                                             #
+# --------------------------------------------------------------------------- #
+
+DEDUP_PROMPT = """Você recebe uma lista de achados de segurança de uma auditoria de plugin
+Moodle. Cada achado veio de um lote de varredura independente (Fase C) e foi verificado
+isoladamente (Fase D) — nenhum lote ou verificação teve visibilidade dos demais achados.
+Por isso, a MESMA vulnerabilidade pode ter sido relatada mais de uma vez: uma vez por cada
+arquivo que participa do mesmo fluxo (ex.: a rota de leitura e a rota de escrita do mesmo
+bug de autorização), ou duas vezes dentro do mesmo arquivo quando duas partes dele exibem o
+mesmo sintoma (ex.: uma função que declara metadata incompleta e outra que exporta os dados
+de acordo com essa mesma metadata incompleta).
+
+Agrupe os achados que descrevem a MESMA causa raiz — ou seja, corrigir um automaticamente
+resolve o outro. NÃO agrupe achados que só compartilham categoria, arquivo ou severidade por
+coincidência; eles precisam ser genuinamente a mesma vulnerabilidade.
+
+Para cada grupo de 2+ achados duplicados, escolha "primary": o índice do achado com a
+descrição, prova de conceito e correção recomendada mais completas e específicas — é esse
+que sobrevive no relatório final; os demais do grupo são consolidados dentro dele.
+
+Responda APENAS com JSON:
+{"groups": [{"indices": [0, 3], "primary": 0, "reason": "uma frase: qual é a causa raiz comum"}]}
+
+Se nenhum achado for duplicado, responda {"groups": []}.
+
+Achados (um por índice):
+"""
+
+
+def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_cache,
+                    clock=None):
+    """Merges findings that independently describe the same root cause.
+
+    One call over the whole list rather than the O(n^2) alternative of comparing every
+    pair — cheap because this runs on the already-small confirmed list (Phase D has
+    already filtered out everything that didn't survive verification), not on the raw
+    candidate count.
+    """
+    if len(findings) < 2:
+        return findings
+
+    payload = json.dumps([
+        {
+            'index': i,
+            'title': f.get('title'),
+            'file': f.get('file'),
+            'line': f.get('line'),
+            'category': f.get('category'),
+            'severity': f.get('severity'),
+            # Trimmed: the model only needs enough to judge "same root cause", not the
+            # full write-up — keeps this single call cheap regardless of how detailed
+            # Phase C's descriptions were.
+            'description': (f.get('description') or '')[:400],
+        }
+        for i, f in enumerate(findings)
+    ], ensure_ascii=False, indent=2)
+
+    def compute():
+        try:
+            text = call_claude(DEDUP_PROMPT + payload, plugin_dir, model, fallback, rules)
+            data = extract_json(text)
+            groups = data.get('groups') if isinstance(data, dict) else None
+            return groups if isinstance(groups, list) else []
+        except Exception as exc:
+            print(f'  aviso: deduplicação falhou ({exc})', file=sys.stderr)
+            return []
+
+    key = hash_key(PROMPT_VERSION, [
+        (f.get('title'), f.get('file'), f.get('line'), f.get('description'))
+        for f in findings
+    ])
+    groups = cached(CACHE_DIR, franken, 'dedupe', key, use_cache, compute)
+
+    merged_away = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        indices = [i for i in group.get('indices', [])
+                  if isinstance(i, int) and 0 <= i < len(findings)]
+        if len(indices) < 2 or any(i in merged_away for i in indices):
+            # A finding already merged into an earlier group is not merged a second
+            # time — keeps the result a simple partition instead of chasing
+            # overlapping/chained groups the model should not have produced anyway.
+            continue
+
+        primary = group.get('primary')
+        if primary not in indices:
+            primary = min(indices)
+        others = [i for i in indices if i != primary]
+
+        survivor = findings[primary]
+        extras = list(survivor.get('extra_locations') or [])
+        for i in others:
+            other = findings[i]
+            extras.append({'file': other.get('file'), 'line': other.get('line')})
+            extras.extend(other.get('extra_locations') or [])
+        survivor['extra_locations'] = extras
+
+        # The more severe of the merged verdicts wins — two independent readings of the
+        # same root cause disagreeing on severity is not a reason to under-report it.
+        severities = [survivor.get('severity', 'info')]
+        severities += [findings[i].get('severity', 'info') for i in others]
+        survivor['severity'] = min(
+            severities,
+            key=lambda s: SEVERITY_ORDER.index(s) if s in SEVERITY_ORDER else len(SEVERITY_ORDER),
+        )
+
+        reason = (group.get('reason') or '').strip()
+        if reason:
+            survivor['dedup_note'] = reason
+
+        merged_away.update(others)
+
+    if not merged_away:
+        return findings
+    return [f for i, f in enumerate(findings) if i not in merged_away]
+
+
+# --------------------------------------------------------------------------- #
+#  Phase F — grade and report                                                  #
 # --------------------------------------------------------------------------- #
 
 LANG_BY_SUFFIX = {'.php': 'php', '.js': 'javascript', '.mustache': 'html',
@@ -651,6 +774,11 @@ def _render_finding(add, index, finding):
     for offset, extra in enumerate(extras, start=2):
         add(f'{offset}. `{extra.get("file")}:{extra.get("line")}`')
     add('')
+
+    if finding.get('dedup_note'):
+        add(f'> **Consolidado**: a varredura relatou este achado mais de uma vez, de ângulos'
+            f' de código diferentes. {finding["dedup_note"]}')
+        add('')
 
     snippet = finding.get('snippet')
     if snippet and snippet.get('code'):
@@ -1060,6 +1188,14 @@ def main():
         confirmed, refuted = candidates, []
 
     # Phase E
+    if len(confirmed) > 1:
+        clock.phase('E', f'Deduplicando {len(confirmed)} achado(s) confirmado(s)')
+        before = len(confirmed)
+        confirmed = dedupe_findings(confirmed, plugin_dir, franken, args.model,
+                                    args.fallback_model, rules, use_cache, clock=clock)
+        clock.done(f'{before - len(confirmed)} duplicata(s) consolidada(s)')
+
+    # Phase F
     confirmed = attach_snippets(confirmed, plugin_dir)
     quality_findings = attach_snippets(quality_findings, plugin_dir)
     grade, grade_reason = compute_grade(confirmed)
@@ -1069,7 +1205,7 @@ def main():
         'quality_findings': quality_findings,
         'libs': libs, 'grade': grade, 'grade_reason': grade_reason,
     }
-    clock.phase('E', 'Gerando relatório')
+    clock.phase('F', 'Gerando relatório')
     ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
                                           args.fallback_model, rules)
 

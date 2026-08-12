@@ -571,7 +571,8 @@ de vulnerabilidade não pode virar arquivo versionado num repositório público.
 | **B** | **Triagem por IA** das mensagens do PHPStan: `real_bug` / `security_relevant` / `moodle_idiom_noise` |
 | **C** | Varredura semântica por IA, em lotes, com o agente lendo o código por conta própria |
 | **D** | Verificação: cada candidato precisa ser confirmado explorável ou é descartado |
-| **E** | Grade determinística + relatório Markdown |
+| **E** | Dedup por IA: consolida achados confirmados que descrevem a mesma causa raiz — os lotes da Fase C e as verificações da Fase D rodam isolados uns dos outros, então a mesma vulnerabilidade vista por ângulos de código diferentes pode sobreviver como dois achados |
+| **F** | Grade determinística + relatório Markdown |
 
 ### Por que o PHPStan roda no nível 6 aqui e no nível 2 no `moodle-phpstan`
 
@@ -654,7 +655,9 @@ Segue a forma de um relatório de revisão de segurança profissional, na ordem 
    evidências de rigor (Privacy API, capabilities, backup, testes) e dependências de terceiro
 4. **Achados** — cada um com severidade/categoria/regra/quem explora, locais afetados,
    **trecho do código**, descrição, avaliação de impacto, mitigações já presentes, prova de
-   conceito e correção recomendada
+   conceito e correção recomendada. Quando a Fase E consolida dois ou mais achados
+   independentes na mesma causa raiz, o resultado traz uma nota "Consolidado" explicando
+   por quê, e os locais afetados de todos os achados originais aparecem juntos
 5. **Pontos fortes de segurança** — práticas defensivas verificadas no código
 6. **Bugs de código (PHPStan triado)** — separados, não afetam a nota
 7. **Descartados na verificação** — candidatos refutados, para transparência e calibragem
@@ -672,11 +675,14 @@ Bedrock/Vertex são removidas do ambiente do processo filho, e cada chamada usa 
 (pula `CLAUDE.md`/skills/hooks do usuário — as regras que importam já vão explícitas via
 `--append-system-prompt`, então carregar tudo de novo em toda chamada só custava tokens à
 toa). Consome cota de forma relevante — um plugin de 70 mil linhas dá ~8-10 lotes de
-varredura, mais a triagem do PHPStan e uma verificação por achado candidato.
+varredura, mais a triagem do PHPStan e uma verificação por achado candidato. A Fase E
+(dedup) soma **uma única chamada por rodada**, não uma por achado — roda sobre a lista já
+pequena de achados confirmados, então o custo não cresce com o tamanho do plugin.
 
-O cache em `~/.moodle-security-audit-cache/<frankenstyle>/` cobre **as três fases de IA**
-(triagem, varredura e verificação), cada uma chaveada pelo hash do que decide seu resultado
-(conteúdo dos arquivos do lote, ou o achado sendo verificado). Isso tem dois efeitos: re-rodar
+O cache em `~/.moodle-security-audit-cache/<frankenstyle>/` cobre **as quatro fases de IA**
+(triagem, varredura, verificação e dedup), cada uma chaveada pelo hash do que decide seu
+resultado (conteúdo dos arquivos do lote, o achado sendo verificado, ou a lista de achados
+confirmados sendo deduplicada). Isso tem dois efeitos: re-rodar
 depois de corrigir um arquivo só reprocessa o que mudou, e **uma rodada interrompida no meio
 retoma de onde parou** — se a cota acabar na Fase D, rodar o mesmo comando de novo pula A, B e
 C inteiras. Uma verificação que falhou por erro transitório (limite de cota, rede) não entra
