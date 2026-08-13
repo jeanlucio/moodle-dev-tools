@@ -165,6 +165,11 @@ fi
 
 GROQ_URL="https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL="${GROQ_MODEL:-openai/gpt-oss-120b}"
+# gpt-oss-120b is a reasoning model: its response splits tokens between an
+# internal "reasoning" field and the final "content" field, both counted
+# against max_tokens. On a large diff the reasoning phase alone can exhaust
+# a 1024-token budget, leaving content empty before the model ever answers.
+GROQ_MAX_TOKENS="${GROQ_MAX_TOKENS:-4096}"
 
 # Claude CLI (opcional) — roda contra a assinatura Claude Code (não API paga).
 # Usa Fable por padrão; só cai pra Opus se a chamada do Fable falhar (ex.: sem
@@ -298,7 +303,7 @@ start_provider() {
 }
 
 [ -n "$GEMINI_KEY" ] && start_provider "Gemini / gemini-2.0-flash" "gemini" "$GEMINI_KEY"
-[ -n "$GROQ_KEY"   ] && start_provider "Groq / ${GROQ_MODEL}" "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL"
+[ -n "$GROQ_KEY"   ] && start_provider "Groq / ${GROQ_MODEL}" "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL" "$GROQ_MAX_TOKENS"
 
 for i in "" 2 3 4 5; do
     KEY_VAR="OPENAI${i}_KEY"
@@ -325,7 +330,15 @@ for i in "${!RESULT_FILES[@]}"; do
 
     if [ -z "$RESPONSE" ]; then
         ERR=$(head -1 "${STDERR_FILES[$i]}")
-        [ -n "$ERR" ] && echo "[${PROVIDERS[$i]}] falhou: $ERR"
+        if [ -n "$ERR" ]; then
+            echo "[${PROVIDERS[$i]}] falhou: $ERR"
+        else
+            # A chamada não lançou exceção (sem stderr), mas devolveu content vazio.
+            # Providers de raciocínio (ex.: gpt-oss via Groq) podem esgotar todo o
+            # max_tokens só no campo "reasoning" antes de emitir qualquer "content".
+            echo "[${PROVIDERS[$i]}] falhou: resposta vazia sem erro reportado" \
+                "(possível orçamento de tokens esgotado em raciocínio)"
+        fi
         continue
     fi
 

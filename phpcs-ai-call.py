@@ -52,12 +52,12 @@ def call_gemini(key, prompt):
         raise RuntimeError(f'HTTP {e.code}: {first_line}')
 
 
-def call_openai(url, key, model, prompt):
+def call_openai(url, key, model, prompt, max_tokens=1024):
     body = json.dumps({
         'model': model,
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': 0.1,
-        'max_tokens': 1024,
+        'max_tokens': max_tokens,
     }).encode()
     headers = {
         'Content-Type': 'application/json',
@@ -139,7 +139,8 @@ def main():
             key = sys.argv[2]
             url = sys.argv[3] if len(sys.argv) > 3 else ''
             model = sys.argv[4] if len(sys.argv) > 4 else ''
-            print(call_openai(url, key, model, prompt))
+            max_tokens = int(sys.argv[5]) if len(sys.argv) > 5 else 1024
+            print(call_openai(url, key, model, prompt, max_tokens))
         elif provider == 'claudecli':
             primary_model = sys.argv[2]
             fallback_model = sys.argv[3] if len(sys.argv) > 3 else ''
