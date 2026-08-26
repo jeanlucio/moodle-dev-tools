@@ -84,6 +84,15 @@ if [ -n "$JS_STAGED" ]; then
             # só então filtra o ruído do browserslist da saída exibida.
             OUTPUT=$("$ESLINT_BIN" --max-warnings 0 "$FILE" 2>&1)
             if [ $? -ne 0 ]; then
+                # Um arquivo já coberto pelo .eslintignore do próprio plugin (ex.: uma lib de
+                # terceiros vendorizada tipo phaser.min.js) ainda assim recebe esse aviso
+                # quando passado direto na linha de comando — o ESLint 8.x não tem
+                # --no-warn-ignored (só a partir da v9) para suprimir isso. Quando é só esse
+                # aviso (o arquivo nunca chega a ser realmente analisado), não é um erro de
+                # lint de verdade — pular em vez de bloquear o commit.
+                if printf '%s\n' "$OUTPUT" | grep -q 'File ignored because of a matching ignore pattern'; then
+                    continue
+                fi
                 printf '%s\n' "$OUTPUT" \
                     | grep -viE 'browserslist|caniuse|update-db|browsers-data'
                 echo ""
