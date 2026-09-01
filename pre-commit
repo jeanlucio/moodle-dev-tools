@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + ESLint + Stylelint + lint Mustache (gates determinísticos) e revisão
-# IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver arquivo staged do
-# seu tipo.
+# Pre-commit: PHPCS + capability-strings + ESLint + Stylelint + lint Mustache (gates
+# determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só
+# roda se houver arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
@@ -66,6 +66,24 @@ if [ -n "$PHP_STAGED" ]; then
     fi
 
     echo "phpcs: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  Capability strings — toda capability em db/access.php precisa de  #
+#  string de lang correspondente (regra do CLAUDE.md, nunca          #
+#  automatizada — PHPCS/moodlecheck/PHPStan não sabem disso).        #
+# ------------------------------------------------------------------ #
+CAP_TRIGGER=$(echo "$PHP_STAGED" | grep -E '(^|/)db/access\.php$|(^|/)lang/en/[^/]+\.php$')
+CAP_CHECKER="$HOME/moodle-dev-tools/check_capability_strings.py"
+if [ -n "$CAP_TRIGGER" ] && [ -f version.php ] && [ -f "$CAP_CHECKER" ]; then
+    echo "capability-strings: verificando..."
+    if ! python3 "$CAP_CHECKER" "$(pwd)"; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: capability sem string de lang (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "capability-strings: OK"
 fi
 
 # ------------------------------------------------------------------ #

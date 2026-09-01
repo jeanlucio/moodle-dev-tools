@@ -27,11 +27,12 @@ locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se hou
 seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
 Mustache.
 
-### Gates determinísticos (PHPCS, ESLint, Stylelint, Mustache)
+### Gates determinísticos (PHPCS, capability-strings, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
+| **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
@@ -49,6 +50,13 @@ Notas:
 - **Mustache** faz um check leve, não o validador completo do `moodle-plugin-ci` (que valida
   HTML e contexto de exemplo). O `@template` ausente é o erro que mais quebra o CI; é o que o
   gate garante. A validação de HTML/contexto continua a cargo do CI.
+- **capability-strings** (`check_capability_strings.py`) só roda se o repositório tiver
+  `version.php` na raiz (identifica um plugin Moodle de verdade — não dispara em repos como
+  este próprio `moodle-dev-tools`). Regra que já existia escrita no CLAUDE.md (item 19 do
+  checklist de entrega), nunca automatizada antes — PHPCS/moodlecheck/PHPStan não sabem que
+  `db/access.php` e `lang/en/*.php` deveriam concordar entre si. Zero falso-positivo testado
+  contra os 110 plugins reais montados em `web-1` no dia em que foi criado (01/09/2026) — só
+  achado genuíno foi no próprio `mod_lti` do core.
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).
