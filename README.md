@@ -8,12 +8,15 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
 6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
-7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos três containers e valida o schema no fim
-8. **Espelhamento de plugins** — `moodle-mirror`, monta os plugins do dev nos containers compatíveis
-9. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
-10. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
-11. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
-12. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
+7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos containers configurados e valida o schema no fim
+8. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
+9. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
+10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+11. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
+
+> `moodle-mirror` (espelhamento de plugins entre containers) não está mais aqui — é específico
+> demais da topologia de um ecossistema multi-versão pra generalizar, e vive no companion privado
+> `moodle-dev-tools-private`.
 
 ---
 
@@ -286,11 +289,11 @@ O script:
 
 ## Configuração de ambiente (containers, paths)
 
-`coverage.sh`, `check-schema.sh`, `upgrade.sh`, `mirror.sh`, `phpstan.sh`,
-`scope-audit.sh`, `security-audit.sh` e `query-baseline.sh` precisam saber os nomes dos
-containers Docker e os paths do Moodle no host. Esses valores vêm de
-`~/.moodle-dev-tools.env` (não é segredo — nomes de container e paths, não chaves de
-API, que continuam em `~/.phpcs-ai.env`):
+`coverage.sh`, `check-schema.sh`, `upgrade.sh`, `phpstan.sh`, `scope-audit.sh`,
+`security-audit.sh` e `query-baseline.sh` precisam saber os nomes dos containers Docker
+e os paths do Moodle no host. Esses valores vêm de `~/.moodle-dev-tools.env` (não é
+segredo — nomes de container e paths, não chaves de API, que continuam em
+`~/.phpcs-ai.env`):
 
 ```bash
 MDT_MOODLE_ROOT=/path/to/project
@@ -305,6 +308,20 @@ Sem esse arquivo, cada script usa os valores padrão da máquina de desenvolvime
 original — funciona, mas aponta para os nomes/paths errados em outro ambiente. Os
 nomes das variáveis (`_51`/`_45`/`_52`) são só um rótulo para "os três alvos que este
 conjunto de scripts assume" — não precisam ser exatamente essas versões do Moodle.
+
+### Alvos de `moodle-check-schema` e `moodle-upgrade`
+
+Esses dois aceitam um número arbitrário de alvos, não só 51/45/52. Por padrão constroem
+a lista a partir das 3 variáveis acima; pra um esquema totalmente diferente (outro
+número de containers, outros rótulos), defina `MDT_TARGETS` direto:
+
+```bash
+MDT_TARGETS="dev:moodle-web-dev staging:moodle-web-staging"
+```
+
+Cada entrada é `rótulo:container`, separadas por espaço. `moodle-check-schema staging` /
+`moodle-upgrade staging` passam a mirar nesse container; `all` continua expandindo pra
+todos os rótulos da lista.
 
 ## Configuração das chaves de API
 
@@ -394,8 +411,7 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 ~/.local/bin/
 ├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
 ├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
-├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos 3 containers + check de schema)
-├── moodle-mirror           ← symlink → mirror.sh (espelha plugins do dev p/ web45/web52)
+├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos containers configurados + check de schema)
 ├── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
 ├── moodle-scope-audit      ← symlink → scope-audit.sh (§6 do SCOPE.md vs disco)
 └── moodle-security-audit   ← symlink → security-audit.sh (auditoria de segurança determinística + IA)
@@ -407,7 +423,12 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 └── plugins-watch.py        ← monitor de atualizações de plugins específicos (opcional)
 
 ~/.phpcs-ai.env             ← suas chaves de API (chmod 600, nunca commitar)
+~/.moodle-dev-tools.env     ← nomes de container e paths (não é segredo)
 ```
+
+`moodle-mirror` não tem symlink criado pelo `install.sh` — vem de
+[moodle-dev-tools-private](https://github.com/jeanlucio/moodle-dev-tools-private), e o symlink
+é manual.
 
 ---
 
@@ -465,6 +486,10 @@ moodle-check-schema [target] [--all]
 | `all` | os três containers |
 | `--all` | mostra **todas** as divergências (core e terceiros), não só as suas |
 
+Os rótulos `45`/`52`/`all` vêm de `~/.moodle-dev-tools.env` (veja
+[Alvos de moodle-check-schema e moodle-upgrade](#alvos-de-moodle-check-schema-e-moodle-upgrade))
+— em outra máquina, com outro conjunto de containers, os rótulos podem ser outros.
+
 Serve para pegar **drift do banco de desenvolvimento**: quando o `install.xml` evolui e o banco
 local não acompanha (faltou reinstalar o plugin ou um passo de `upgrade.php`). Os prefixos de
 tabela dos seus plugins são derivados automaticamente dos diretórios com repositório `.git`.
@@ -477,29 +502,6 @@ Sai com código 1 se houver divergência (serve de gate antes de publicar).
 
 ---
 
-## Espelhamento de plugins — `moodle-mirror`
-
-O web-1 monta a árvore `./html` inteira (tem todos os plugins). O web45 e o web52 montam o
-core próprio + um bind mount **individual por plugin**. Ao criar um plugin novo, é preciso
-adicionar esse mount manualmente — e é fácil esquecer, deixando o plugin só no web-1.
-
-```bash
-moodle-mirror [--dry-run]
-```
-
-Detecta os plugins do dev (remote `jeanlucio`) que faltam em web45/web52, adiciona os bind
-mounts no `docker-compose.yml` (com backup + validação YAML), recria os containers e roda
-`moodle-upgrade` para instalar nos bancos. Fecha o pipeline: **espelhar → recriar → upgrade →
-validar schema**.
-
-**Respeita compatibilidade:** um plugin só é espelhado para um container se o core daquele
-container atende ao `$plugin->requires` **e** (havendo `$plugin->supported`) o branch está no
-range suportado. Isso é essencial — um plugin incompatível (ex.: um tema 5.1-only no web45)
-faz o `admin/cli/upgrade.php` **abortar a instalação de todos os outros**. Plugins de terceiros
-(remote ≠ `jeanlucio`) são ignorados; monte-os à mão se quiser.
-
----
-
 ## Upgrade + validação — `moodle-upgrade`
 
 Acopla "aplicar upgrade" e "validar schema" numa operação atômica — o check de schema vem
@@ -507,7 +509,7 @@ sempre junto, impossível esquecer. É o fluxo para testar um `db/upgrade.php` a
 `version.php` de um plugin.
 
 ```bash
-moodle-upgrade [51|45|52|all]   # padrão: all
+moodle-upgrade [target|all]   # padrão: all — rótulos vêm de ~/.moodle-dev-tools.env
 ```
 
 Para cada container do alvo: roda `admin/cli/upgrade.php`, purga os caches, e no fim dispara o

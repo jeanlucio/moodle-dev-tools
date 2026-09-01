@@ -23,16 +23,18 @@ ln -sf "$(pwd)/prepare-commit-msg"  "$HOOKS_DIR/prepare-commit-msg"
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh" \
-    "$(pwd)/mirror.sh" "$(pwd)/phpstan.sh" "$(pwd)/scope-audit.sh" "$(pwd)/security-audit.sh" \
+    "$(pwd)/phpstan.sh" "$(pwd)/scope-audit.sh" "$(pwd)/security-audit.sh" \
     "$(pwd)/query-baseline.sh"
 ln -sf "$(pwd)/coverage.sh"       "$BIN_DIR/moodle-coverage"
 ln -sf "$(pwd)/check-schema.sh"   "$BIN_DIR/moodle-check-schema"
 ln -sf "$(pwd)/upgrade.sh"        "$BIN_DIR/moodle-upgrade"
-ln -sf "$(pwd)/mirror.sh"         "$BIN_DIR/moodle-mirror"
 ln -sf "$(pwd)/phpstan.sh"        "$BIN_DIR/moodle-phpstan"
 ln -sf "$(pwd)/scope-audit.sh"    "$BIN_DIR/moodle-scope-audit"
 ln -sf "$(pwd)/security-audit.sh" "$BIN_DIR/moodle-security-audit"
 ln -sf "$(pwd)/query-baseline.sh" "$BIN_DIR/moodle-query-baseline"
+# moodle-mirror não é criado aqui — é específico da máquina/ecossistema (topologia fixa de
+# múltiplos containers) e vive em moodle-dev-tools-private. Symlink manual, se aplicável:
+#   ln -sf /path/to/moodle-dev-tools-private/mirror.sh "$HOME/.local/bin/moodle-mirror"
 
 # PHPStan + extensão Moodle ficam num projeto Composer isolado em phpstan/ (não no Moodle).
 if command -v composer >/dev/null 2>&1; then
