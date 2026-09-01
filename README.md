@@ -27,7 +27,7 @@ locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se hou
 seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
 Mustache.
 
-### Gates determinísticos (PHPCS, capability-strings, get_string, ESLint, Stylelint, Mustache)
+### Gates determinísticos (PHPCS, capability-strings, get_string, template/module-names, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -37,6 +37,7 @@ Mustache.
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
+| **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
@@ -68,6 +69,14 @@ Notas:
   inteiro. Zero falso-positivo depois desse ajuste, testado contra ~10 plugins reais — achou 2
   bugs genuínos e inéditos no `block_playerhud` (publicado): `get_string('no_items_selected', ...)`
   e `get_string('validate_number', 'core')`, nenhuma das duas strings existe (01/09/2026).
+- **template/module-names** (`check_template_module_names.py`) verifica só o *valor* da tag —
+  a presença do `@template` já é gate à parte (acima). Nenhum check existente cobria `@module`
+  de jeito nenhum (nem presença, nem valor). Convenção confirmada contra exemplos reais antes de
+  escrever (nem template nem module derrubam o prefixo "mod_", diferente do arquivo de lang):
+  `mod_playervideo/attempt_summary`, `core_contentbank/bankcontent/navigation`,
+  `core_group/comboboxsearch/group`. Zero falso-positivo testado contra 11 plugins do
+  ecossistema + uma amostra do core — achou 1 problema cosmético genuíno em `mod_assign`
+  (`@module` com um backtick perdido no valor, sem efeito funcional).
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).

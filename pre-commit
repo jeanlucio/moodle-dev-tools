@@ -248,6 +248,22 @@ if [ -n "$MUSTACHE_STAGED" ]; then
 fi
 
 # ------------------------------------------------------------------ #
+#  @template/@module — o nome declarado bate com o caminho real do   #
+#  arquivo (o check acima só garante que a tag existe, não o valor). #
+# ------------------------------------------------------------------ #
+NAME_CHECKER="$HOME/moodle-dev-tools/check_template_module_names.py"
+if { [ -n "$MUSTACHE_STAGED" ] || [ -n "$JS_STAGED" ]; } && [ -f version.php ] && [ -f "$NAME_CHECKER" ]; then
+    echo "template/module-names: verificando..."
+    if ! python3 "$NAME_CHECKER" "$(pwd)" $MUSTACHE_STAGED $JS_STAGED; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: @template/@module com nome incorreto (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "template/module-names: OK"
+fi
+
+# ------------------------------------------------------------------ #
 #  Revisão IA — paralela, pode ser ignorada com SKIP_AI=1            #
 # ------------------------------------------------------------------ #
 if [ "${SKIP_AI}" = "1" ]; then
