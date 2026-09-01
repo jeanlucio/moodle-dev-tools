@@ -13,6 +13,7 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 9. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
 10. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
 11. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
+12. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
 
 ---
 
@@ -982,3 +983,39 @@ python3 ~/.moodle-dev-tools/plugins-watch.py  # roda uma vez para criar o state 
 ```
 
 O estado é salvo em `~/.moodle-plugins-watch-state.json`.
+
+---
+
+## Monitor de updates de core Moodle
+
+Script complementar (`core-updates-watch.py`) que checa, para cada um dos três containers
+locais (`meu-moodle-web-1`, `meu-moodle-web45-1`, `meu-moodle-web52-1`), se há uma
+atualização de core Moodle disponível para o branch daquele container, e notifica via
+Telegram quando houver.
+
+### Como funciona
+
+- Não reimplementa a checagem: copia `core_update_probe.php` para dentro de cada
+  container (`docker cp` + `docker exec php ...` + remove o arquivo depois) e reaproveita
+  a própria classe `\core\update\checker` do Moodle — a mesma usada em Site
+  administration > Notifications, que consulta `download.moodle.org/api/1.3/updates.php`.
+- Filtra o resultado pelo branch do próprio site (`moodle_major_version(true)`, ex.
+  `"5.1"`), então só alerta sobre uma atualização real do branch instalado — não sobre
+  branches futuros (ex. sugestão de migrar 5.1 → 5.2).
+- Guarda em `~/.moodle-core-updates-seen.json` a última versão já notificada por
+  container, para não repetir o aviso todo dia enquanto a mesma atualização seguir
+  disponível.
+
+### Instalação manual
+
+```bash
+cp core-updates-watch.py core_update_probe.php ~/.moodle-dev-tools/
+chmod +x ~/.moodle-dev-tools/core-updates-watch.py
+
+# Registra o cron (roda toda segunda-feira às 9h25)
+(crontab -l; echo "25 9 * * 1 /usr/bin/python3 $HOME/.moodle-dev-tools/core-updates-watch.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+```
+
+Ajuste a lista `CONTAINERS` no início do script se um container for renomeado ou o
+mapeamento de docroot mudar (ver `CLAUDE.md` do projeto § Mapeamento container →
+domínio → docroot).
