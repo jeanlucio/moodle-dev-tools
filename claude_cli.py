@@ -161,7 +161,17 @@ def _run_claude(prompt, cwd, model, system_prompt, allow_tools):
         timeout=CLAUDE_TIMEOUT, cwd=str(cwd), env=_subscription_env(),
     )
     if result.returncode != 0:
-        err = (result.stderr or result.stdout or '').strip().split('\n')[0]
+        # The CLI's own stderr on a hard failure is dominated by the benign, always-printed
+        # "workspace has not been trusted" notice (this cwd is a plugin dir, never opened
+        # interactively) — that line is never the actual cause. The real reason (rate limit,
+        # monthly spend cap, overload) lives in stdout's JSON envelope, so prefer that.
+        try:
+            envelope = json.loads(result.stdout)
+            err = str(envelope.get('result') or '').strip()
+        except (json.JSONDecodeError, AttributeError):
+            err = ''
+        if not err:
+            err = (result.stderr or result.stdout or '').strip().split('\n')[0]
         raise RuntimeError(err or f'exit {result.returncode}')
 
     try:

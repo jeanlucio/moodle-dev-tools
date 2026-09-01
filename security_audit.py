@@ -1070,6 +1070,8 @@ def main():
     parser.add_argument('--model', default='claude-fable-5')
     parser.add_argument('--fallback-model', default='claude-opus-5')
     parser.add_argument('--phpstan-level', type=int, default=6)
+    parser.add_argument('--no-phpstan', action='store_true',
+                        help='pula a fase A (PHPStan + triagem) inteiramente')
     # 10k lines is roughly 130k tokens of code — comfortably inside the context window, and
     # 3x fewer calls than the original 3.5k. Each call re-pays the system prompt, so small
     # batches were spending quota on overhead rather than on analysis.
@@ -1138,11 +1140,16 @@ def main():
     clock = Clock(progress=progress)
 
     # Phase A
-    clock.phase('A', f'PHPStan nível {args.phpstan_level}')
-    phpstan_msgs, phpstan_err = run_phpstan(plugin_dir, args.phpstan_level)
-    if phpstan_err:
-        print(f'  aviso: {phpstan_err}', file=sys.stderr)
-    clock.done(f'{len(phpstan_msgs)} mensagem(ns) após filtro de ruído')
+    if args.no_phpstan:
+        clock.phase('A', 'PHPStan (pulado via --no-phpstan)')
+        phpstan_msgs, phpstan_err = [], None
+        clock.done('0 mensagem(ns)')
+    else:
+        clock.phase('A', f'PHPStan nível {args.phpstan_level}')
+        phpstan_msgs, phpstan_err = run_phpstan(plugin_dir, args.phpstan_level)
+        if phpstan_err:
+            print(f'  aviso: {phpstan_err}', file=sys.stderr)
+        clock.done(f'{len(phpstan_msgs)} mensagem(ns) após filtro de ruído')
     libs = check_thirdparty_libs(plugin_dir)
     if libs:
         print(f'  {len(libs)} biblioteca(s) de terceiro empacotada(s)')
