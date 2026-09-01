@@ -6,7 +6,7 @@
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
 
-PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs"
+PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs --standard=moodle"
 
 ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '\.(php|js|mustache|css|xml)$' \
