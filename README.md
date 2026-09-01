@@ -27,7 +27,7 @@ locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se hou
 seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
 Mustache.
 
-### Gates determinísticos (PHPCS, capability-strings, get_string, capability-exists, template/module-names, ESLint, Stylelint, Mustache)
+### Gates determinísticos (PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -39,6 +39,7 @@ Mustache.
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
 | **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
+| **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
@@ -90,6 +91,11 @@ Notas:
   `core_group/comboboxsearch/group`. Zero falso-positivo testado contra 11 plugins do
   ecossistema + uma amostra do core — achou 1 problema cosmético genuíno em `mod_assign`
   (`@module` com um backtick perdido no valor, sem efeito funcional).
+- **duplicate-tables** (`check_duplicate_tables.py`) é o mais simples dos cinco — autocontido,
+  um `install.xml` comparado só contra ele mesmo, sem resolver componente nenhum. Usa parser de
+  XML de verdade (`xml.etree.ElementTree`), não regex, já que `install.xml` é XML de verdade.
+  Zero achado nos 110 plugins reais (esperado — é um erro raro), mas o teste com um caso
+  quebrado de propósito confirma que pega quando existe.
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).

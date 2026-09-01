@@ -23,6 +23,7 @@ PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
 JS_STAGED=$(echo "$ALL_STAGED" | grep '\.js$')
 MUSTACHE_STAGED=$(echo "$ALL_STAGED" | grep '\.mustache$')
 CSS_STAGED=$(echo "$ALL_STAGED" | grep '\.css$')
+XML_STAGED=$(echo "$ALL_STAGED" | grep '\.xml$')
 
 # docs/ hosts each plugin's own GitHub Pages site (static, non-Moodle content).
 # The AI review's rules assume Moodle plugin code (path-class CSS scoping,
@@ -124,6 +125,23 @@ if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$CAPEXISTS_CHECKER" ]; th
         exit 1
     fi
     echo "capability-exists: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  install.xml — nenhum NAME de tabela duplicado dentro do mesmo      #
+#  arquivo.                                                            #
+# ------------------------------------------------------------------ #
+DUPTABLE_TRIGGER=$(echo "$XML_STAGED" | grep -E '(^|/)db/install\.xml$')
+DUPTABLE_CHECKER="$HOME/moodle-dev-tools/check_duplicate_tables.py"
+if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$DUPTABLE_CHECKER" ]; then
+    echo "duplicate-tables: verificando..."
+    if ! python3 "$DUPTABLE_CHECKER" $DUPTABLE_TRIGGER; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: tabela duplicada no install.xml (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "duplicate-tables: OK"
 fi
 
 # ------------------------------------------------------------------ #
