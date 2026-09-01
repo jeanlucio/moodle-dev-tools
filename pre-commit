@@ -111,6 +111,22 @@ if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$GETSTRING_CHECKER" ]; th
 fi
 
 # ------------------------------------------------------------------ #
+#  has_capability()/require_capability() — a capability referenciada #
+#  precisa existir de verdade em algum db/access.php.                 #
+# ------------------------------------------------------------------ #
+CAPEXISTS_CHECKER="$HOME/moodle-dev-tools/check_capability_exists.py"
+if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$CAPEXISTS_CHECKER" ]; then
+    echo "capability-exists: verificando..."
+    if ! python3 "$CAPEXISTS_CHECKER" "$(pwd)" $PHP_STAGED; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: capability referenciada não existe (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "capability-exists: OK"
+fi
+
+# ------------------------------------------------------------------ #
 #  ESLint — somente JS staged, espelha o CI (--max-lint-warnings 0)  #
 # ------------------------------------------------------------------ #
 if [ -n "$JS_STAGED" ]; then

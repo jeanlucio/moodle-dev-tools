@@ -27,13 +27,14 @@ locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se hou
 seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
 Mustache.
 
-### Gates determinísticos (PHPCS, capability-strings, get_string, template/module-names, ESLint, Stylelint, Mustache)
+### Gates determinísticos (PHPCS, capability-strings, get_string, capability-exists, template/module-names, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
 | **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` com os dois argumentos literais aponta pra uma string que existe de verdade | Sim |
+| **capability-exists** | `.php` staged | Toda chamada `has_capability()`/`require_capability()` com argumento literal referencia uma capability que existe de verdade | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
@@ -57,8 +58,9 @@ Notas:
   este próprio `moodle-dev-tools`). Regra que já existia escrita no CLAUDE.md (item 19 do
   checklist de entrega), nunca automatizada antes — PHPCS/moodlecheck/PHPStan não sabem que
   `db/access.php` e `lang/en/*.php` deveriam concordar entre si. Zero falso-positivo testado
-  contra os 110 plugins reais montados em `web-1` no dia em que foi criado (01/09/2026) — só
-  achado genuíno foi no próprio `mod_lti` do core.
+  contra os 110 plugins reais montados em `web-1` no dia em que foi criado (01/09/2026) — 6
+  achados genuínos, todos no core (`mod_lti`, e mais 5 depois de um ajuste de regex — ver nota
+  do `capability-exists` abaixo).
 - **get_string** (`check_get_string.py`) resolve o próprio componente do plugin, `core`/`moodle`,
   e os tipos já conhecidos por este ecossistema (`mod`/`local`/`block`/`filter`/`report`/`format`/
   `availability`) via `MDT_MOODLE_PUBLIC`. Um componente desconhecido é **pulado, nunca
@@ -68,7 +70,18 @@ Notas:
   depois disso que não seja `,` ou `)` (ex.: concatenação, `'x_' . $var`) invalida o literal
   inteiro. Zero falso-positivo depois desse ajuste, testado contra ~10 plugins reais — achou 2
   bugs genuínos e inéditos no `block_playerhud` (publicado): `get_string('no_items_selected', ...)`
-  e `get_string('validate_number', 'core')`, nenhuma das duas strings existe (01/09/2026).
+  e `get_string('validate_number', 'core')`, nenhuma das duas strings existe (01/09/2026, já
+  corrigido).
+- **capability-exists** (`check_capability_exists.py`) é o inverso do `capability-strings`:
+  aquele valida as capabilities que o **próprio** plugin declara; este valida uma capability
+  **referenciada** (de `has_capability()`/`require_capability()`), possivelmente de outro
+  componente. Mesma resolução conservadora do `get_string` (próprio componente, `moodle` via
+  `lib/db/access.php`, tipos conhecidos). Achado de bootstrap: a regex de chave de capability
+  só cobria `=> [` — `lib/db/access.php` do próprio core ainda usa a sintaxe legada
+  `=> array(` em toda parte, dando falso-positivo generalizado até a regex aceitar as duas
+  formas (corrigido também no `capability-strings`, que usa a mesma regex). Depois do ajuste,
+  zero falso-positivo nos 110 plugins + achou 5 capabilities `portfolioexport` do core
+  (`mod_resource`/`folder`/`imscp`/`url`/`page`) sem string, além do `mod_lti` já achado antes.
 - **template/module-names** (`check_template_module_names.py`) verifica só o *valor* da tag —
   a presença do `@template` já é gate à parte (acima). Nenhum check existente cobria `@module`
   de jeito nenhum (nem presença, nem valor). Convenção confirmada contra exemplos reais antes de

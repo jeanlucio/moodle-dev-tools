@@ -23,8 +23,11 @@ from pathlib import Path
 # Matches a capability array KEY specifically — anchored to "=> [" right after the
 # quoted string, so a capability referenced only as a VALUE (e.g. inside
 # 'clonepermissionsfrom' => 'moodle/course:view') is never mistaken for a declaration.
+# "=> [" or the legacy "=> array(" -- core's own lib/db/access.php still uses array()
+# throughout (predates the short-array-syntax convention), so both must be accepted when
+# a checker needs to parse someone ELSE's access.php, not just a freshly-written one.
 CAPABILITY_KEY_RE = re.compile(
-    r"""['"](?P<full>[a-z][a-z0-9_]*/[a-z][a-z0-9_]*:[a-zA-Z0-9_]+)['"]\s*=>\s*\["""
+    r"""['"](?P<full>[a-z][a-z0-9_]*/[a-z][a-z0-9_]*:[a-zA-Z0-9_]+)['"]\s*=>\s*(?:\[|array\s*\()"""
 )
 STRING_KEY_RE = re.compile(r"""\$string\[\s*['"](?P<key>[a-zA-Z0-9_:]+)['"]\s*\]""")
 
