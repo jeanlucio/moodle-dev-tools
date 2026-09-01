@@ -19,7 +19,9 @@
 # Uso:
 #   moodle-check-schema [target] [--all]
 #
-#   target : 51 (web-1, padrão) | 45 (web45) | 52 (web52) | all (os três)
+#   target : um dos rótulos definidos em MDT_TARGETS (~/.moodle-dev-tools.env), ou "all"
+#            para todos. Sem MDT_TARGETS, cai nos rótulos desta máquina: 51 (web-1,
+#            padrão) | 45 (web45) | 52 (web52) | all (os três).
 #   --all  : mostra TODAS as divergências de banco (core e terceiros), não só as dos seus
 #            plugins. Não afeta o check de formato canônico, que já roda só nos seus.
 #
@@ -36,29 +38,59 @@ fi
 
 HOST_ROOT="${MDT_MOODLE_PUBLIC:-/home/ubuntu/meu-moodle/html/public}"
 
+# Lista de alvos "rótulo:container" que esta ferramenta aceita. Por padrão, monta os 3
+# rótulos desta máquina a partir das variáveis individuais (compatibilidade com quem já
+# tem só MDT_CONTAINER_51/45/52 configurado). Para um conjunto de alvos totalmente
+# diferente (outro número de containers, outros nomes), defina MDT_TARGETS direto no
+# ~/.moodle-dev-tools.env, ex.: MDT_TARGETS="dev:meu-moodle-dev staging:meu-moodle-staging".
+C51="${MDT_CONTAINER_51:-meu-moodle-web-1}"
+C45="${MDT_CONTAINER_45:-meu-moodle-web45-1}"
+C52="${MDT_CONTAINER_52:-meu-moodle-web52-1}"
+MDT_TARGETS="${MDT_TARGETS:-51:$C51 45:$C45 52:$C52}"
+
+LABELS=()
+TARGET_CONTAINERS=()
+for entry in $MDT_TARGETS; do
+    LABELS+=("${entry%%:*}")
+    TARGET_CONTAINERS+=("${entry#*:}")
+done
+
 # ------------------------------------------------------------------ #
 #  Parse de argumentos                                               #
 # ------------------------------------------------------------------ #
-TARGET="51"
+TARGET="${LABELS[0]}"
 SHOW_ALL=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --all) SHOW_ALL=1; shift ;;
-        51|45|52|all) TARGET="$1"; shift ;;
-        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "erro: argumento desconhecido '$1'" >&2; exit 1 ;;
+        all) TARGET="all"; shift ;;
+        -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)
+            match=0
+            for lbl in "${LABELS[@]}"; do
+                if [ "$lbl" = "$1" ]; then
+                    TARGET="$1"
+                    match=1
+                    break
+                fi
+            done
+            if [ "$match" -eq 0 ]; then
+                echo "erro: alvo desconhecido '$1'. Alvos válidos: ${LABELS[*]} all" >&2
+                exit 1
+            fi
+            shift
+            ;;
     esac
 done
 
-C51="${MDT_CONTAINER_51:-meu-moodle-web-1}"
-C45="${MDT_CONTAINER_45:-meu-moodle-web45-1}"
-C52="${MDT_CONTAINER_52:-meu-moodle-web52-1}"
-case "$TARGET" in
-    51)  CONTAINERS="$C51" ;;
-    45)  CONTAINERS="$C45" ;;
-    52)  CONTAINERS="$C52" ;;
-    all) CONTAINERS="$C51 $C45 $C52" ;;
-esac
+if [ "$TARGET" = "all" ]; then
+    CONTAINERS="${TARGET_CONTAINERS[*]}"
+else
+    CONTAINERS=""
+    for i in "${!LABELS[@]}"; do
+        [ "${LABELS[$i]}" = "$TARGET" ] && CONTAINERS="${TARGET_CONTAINERS[$i]}"
+    done
+fi
 
 # ------------------------------------------------------------------ #
 #  Deriva os prefixos de tabela e os componentes Frankenstyle dos    #
