@@ -3,7 +3,7 @@
 Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 1. **PHPCS** — padrão Moodle, roda localmente (~60ms), sem custo
-2. **ESLint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS e templates)
+2. **ESLint + Stylelint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS, CSS e templates)
 3. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que as ferramentas não detectam
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
@@ -16,30 +16,38 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 ---
 
-## Hook 1 — pre-commit: PHPCS + ESLint + Mustache + revisão IA
+## Hook 1 — pre-commit: PHPCS + ESLint + Stylelint + Mustache + revisão IA
 
-O hook roda em quatro etapas. As três primeiras são **gates determinísticos** (ferramentas
-locais, sem custo, sem IA); a quarta é a revisão IA. Cada gate só roda se houver arquivo do
-seu tipo no staging — um commit que mexe só em PHP não dispara ESLint nem o lint Mustache.
+O hook roda em cinco etapas. As quatro primeiras são **gates determinísticos** (ferramentas
+locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se houver arquivo do
+seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
+Mustache.
 
-### Gates determinísticos (PHPCS, ESLint, Mustache)
+### Gates determinísticos (PHPCS, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
+| **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
 
-- **ESLint** usa o binário e a config do Moodle (`.eslintrc`), localizados subindo a árvore a
-  partir do repositório. Se o plugin não estiver montado sob uma árvore Moodle (sem `eslint`
-  acessível), o lint JS é **pulado sem bloquear** — o hook é global e não pode quebrar commits
-  de repositórios fora do ecossistema Moodle.
+- **ESLint** e **Stylelint** usam o binário e a config do Moodle (`.eslintrc`/`.stylelintrc`),
+  localizados subindo a árvore a partir do repositório. Se o plugin não estiver montado sob uma
+  árvore Moodle (sem o binário acessível), o lint correspondente é **pulado sem bloquear** — o
+  hook é global e não pode quebrar commits de repositórios fora do ecossistema Moodle.
+- **Stylelint** filtra do output os avisos "rule is deprecated" que o `.stylelintrc` do Moodle
+  sempre imprime (regras antigas mantidas por compatibilidade, não erros do arquivo em si) —
+  mantém a saída de falha focada nos problemas reais.
 - **Mustache** faz um check leve, não o validador completo do `moodle-plugin-ci` (que valida
   HTML e contexto de exemplo). O `@template` ausente é o erro que mais quebra o CI; é o que o
   gate garante. A validação de HTML/contexto continua a cargo do CI.
+- Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
+  leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
+  acusasse nada — motivou a criação deste gate (01/09/2026).
 - Os gates determinísticos **não podem ser pulados** — só a revisão IA aceita `SKIP_AI=1`.
 
 ### O que a IA revisa
@@ -50,8 +58,8 @@ Arquivos dentro de um `docs/` na raiz do repositório também ficam de fora **s�
 esse diretório hospeda o site de documentação de cada plugin no GitHub Pages (Jekyll, CSS, JS,
 imagens — conteúdo estático, não código Moodle), e as regras da IA partem do pressuposto de que
 o diff é código de plugin (escopo de CSS por `.path-*`, PHPDoc, AMD, etc.), o que gera falso
-positivo ali. Os gates determinísticos (PHPCS, ESLint, Mustache) continuam rodando normalmente
-em `docs/` quando há arquivo do tipo certo staged — por exemplo, o ESLint ainda pega erro de
+positivo ali. Os gates determinísticos (PHPCS, ESLint, Stylelint, Mustache) continuam rodando
+normalmente em `docs/` quando há arquivo do tipo certo staged — por exemplo, o ESLint ainda pega erro de
 estilo num `docs/assets/js/*.js`. Caso de origem: `moodle-mod_playerwords`, commit que adicionou
 o site de documentação do plugin.
 
@@ -140,6 +148,11 @@ PHPCS (local, ~60ms)
     │    ├── erros → bloqueia
     │    └── OK
          │
+         ▼ (só se há .css staged)
+    Stylelint (local, .stylelintrc do Moodle)
+    │    ├── erros → bloqueia
+    │    └── OK
+         │
          ▼ (só se há .mustache staged)
     Mustache (local: @template obrigatório)
     │    ├── @template ausente → bloqueia
@@ -167,8 +180,8 @@ Se uma IA falhar (rate limit, cota, timeout) **ou retornar fora do formato** (1�
 SKIP_AI=1 git commit -m "mensagem"
 ```
 
-Os gates determinísticos (PHPCS, ESLint, Mustache) não podem ser pulados — `SKIP_AI=1` afeta
-apenas a revisão IA.
+Os gates determinísticos (PHPCS, ESLint, Stylelint, Mustache) não podem ser pulados —
+`SKIP_AI=1` afeta apenas a revisão IA.
 
 ### Cobertura do diff por arquivo
 
@@ -351,7 +364,7 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 
 ```
 ~/.githooks/
-├── pre-commit              ← symlink → PHPCS + ESLint + Mustache + IA a cada commit
+├── pre-commit              ← symlink → PHPCS + ESLint + Stylelint + Mustache + IA a cada commit
 └── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
 
 ~/.local/bin/

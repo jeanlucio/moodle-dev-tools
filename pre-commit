@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + ESLint + lint Mustache (gates determinísticos) e revisão IA paralela
-# em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver arquivo do seu tipo staged.
+# Pre-commit: PHPCS + ESLint + Stylelint + lint Mustache (gates determinísticos) e revisão
+# IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver arquivo staged do
+# seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
@@ -13,6 +14,7 @@ ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
 PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
 JS_STAGED=$(echo "$ALL_STAGED" | grep '\.js$')
 MUSTACHE_STAGED=$(echo "$ALL_STAGED" | grep '\.mustache$')
+CSS_STAGED=$(echo "$ALL_STAGED" | grep '\.css$')
 
 # docs/ hosts each plugin's own GitHub Pages site (static, non-Moodle content).
 # The AI review's rules assume Moodle plugin code (path-class CSS scoping,
@@ -127,6 +129,47 @@ if [ -n "$JS_STAGED" ]; then
                 AMD_WARN=1
             fi
         done <<< "$SRC_STAGED"
+    fi
+fi
+
+# ------------------------------------------------------------------ #
+#  Stylelint — somente CSS staged, espelha o CI (grunt stylelint:css) #
+# ------------------------------------------------------------------ #
+if [ -n "$CSS_STAGED" ]; then
+    STYLELINT_BIN=$(find_up node_modules/.bin/stylelint)
+    if [ -z "$STYLELINT_BIN" ]; then
+        echo "stylelint: binário não encontrado na árvore — lint CSS pulado"
+    else
+        echo "stylelint: verificando arquivos staged..."
+        echo ""
+
+        STYLELINT_ERRORS=0
+        while IFS= read -r FILE; do
+            [ -f "$FILE" ] || continue
+            # O CI roda via 'grunt stylelint:css' (moodle-plugin-ci grunt --max-lint-warnings 0);
+            # a CLI direta usa o .stylelintrc auto-descoberto subindo a árvore a partir do
+            # arquivo, mesmo config que o grunt aplica — replica o gate real do CI.
+            OUTPUT=$("$STYLELINT_BIN" "$FILE" 2>&1)
+            if [ $? -ne 0 ]; then
+                # Moodle's .stylelintrc still uses several rules stylelint itself considers
+                # deprecated (kept for backwards compat, not this hook's call to change) — every
+                # run prints one "is deprecated" line per such rule, unrelated to this file's
+                # actual errors. Filtered out to keep the failure output focused.
+                printf '%s\n' "$OUTPUT" | grep -v 'is deprecated\.$\|^Deprecation warnings:$'
+                echo ""
+                STYLELINT_ERRORS=1
+            fi
+        done <<< "$CSS_STAGED"
+
+        if [ $STYLELINT_ERRORS -ne 0 ]; then
+            echo "--------------------------------------------------------------"
+            echo "  Commit bloqueado: corrija os erros de stylelint acima."
+            echo "  Dica: '$STYLELINT_BIN --fix <arquivo>' corrige boa parte automaticamente."
+            echo "--------------------------------------------------------------"
+            exit 1
+        fi
+
+        echo "stylelint: OK"
     fi
 fi
 
