@@ -16,7 +16,15 @@
 
 set -euo pipefail
 
-ROOT="/home/ubuntu/meu-moodle"
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+ROOT="${MDT_MOODLE_ROOT:-/home/ubuntu/meu-moodle}"
+C45="${MDT_CONTAINER_45:-meu-moodle-web45-1}"
+C52="${MDT_CONTAINER_52:-meu-moodle-web52-1}"
 COMPOSE="$ROOT/docker-compose.yml"
 DRYRUN=0
 [ "${1:-}" = "--dry-run" ] && DRYRUN=1
@@ -27,8 +35,8 @@ core_info() {
         'php -r "define(\"CLI_SCRIPT\",1);require(\"/var/www/html/config.php\");echo \$CFG->version.\"|\".\$CFG->branch;"' \
         2>/dev/null
 }
-i45=$(core_info meu-moodle-web45-1); VER45=${i45%%|*}; VER45=${VER45%%.*}; BR45=${i45##*|}
-i52=$(core_info meu-moodle-web52-1); VER52=${i52%%|*}; VER52=${VER52%%.*}; BR52=${i52##*|}
+i45=$(core_info "$C45"); VER45=${i45%%|*}; VER45=${VER45%%.*}; BR45=${i45##*|}
+i52=$(core_info "$C52"); VER52=${i52%%|*}; VER52=${VER52%%.*}; BR52=${i52##*|}
 
 # Compatível? $1=plugin_path $2=core_ver_int $3=core_branch
 is_compat() {

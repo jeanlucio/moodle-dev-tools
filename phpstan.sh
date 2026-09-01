@@ -16,12 +16,18 @@
 
 set -euo pipefail
 
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
 PHPSTAN="/home/ubuntu/moodle-dev-tools/phpstan/vendor/bin/phpstan"
-MOODLE="/home/ubuntu/meu-moodle/html/public"
+MOODLE="${MDT_MOODLE_PUBLIC:-/home/ubuntu/meu-moodle/html/public}"
 # Raiz do Moodle (com lib/components.json + vendor) que a extensão phpstan-moodle bootstrapa
 # para conhecer as classes do core e seus aliases legacy (cm_info etc.). É um nível acima do
 # docroot na estrutura public/ do Moodle 5.x.
-MOODLE_ROOT="/home/ubuntu/meu-moodle/html"
+MOODLE_ROOT="${MDT_MOODLE_HTML:-/home/ubuntu/meu-moodle/html}"
 
 LEVEL=2
 PLUGIN=""

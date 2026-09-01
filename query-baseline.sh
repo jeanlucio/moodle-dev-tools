@@ -32,7 +32,14 @@
 
 set -euo pipefail
 
-MOODLE="/home/ubuntu/meu-moodle/html/public"
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+MOODLE="${MDT_MOODLE_PUBLIC:-/home/ubuntu/meu-moodle/html/public}"
+CONTAINER="${MDT_CONTAINER_51:-meu-moodle-web-1}"
 
 PLUGIN=""
 PASSTHRU=()
@@ -65,8 +72,8 @@ if [ ! -d "$PLUGIN_ABS/tests" ]; then
     exit 1
 fi
 
-if ! docker ps --format '{{.Names}}' | grep -qx "meu-moodle-web-1"; then
-    echo "erro: container 'meu-moodle-web-1' não está rodando" >&2
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "erro: container '$CONTAINER' não está rodando" >&2
     exit 1
 fi
 

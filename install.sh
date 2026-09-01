@@ -57,6 +57,17 @@ else
     echo "~/.phpcs-ai.env já existe — não foi sobrescrito."
 fi
 
+# Cria o arquivo de config de ambiente (containers/paths, sem segredo nenhum) se ainda
+# não existir. Sem ele, os scripts caem nos valores padrão da máquina de dev original.
+if [ ! -f "$HOME/.moodle-dev-tools.env" ]; then
+    cp .moodle-dev-tools.env.example "$HOME/.moodle-dev-tools.env"
+    echo ""
+    echo "Arquivo ~/.moodle-dev-tools.env criado."
+    echo "Edite-o com os nomes de container e paths do seu ambiente."
+else
+    echo "~/.moodle-dev-tools.env já existe — não foi sobrescrito."
+fi
+
 # Monitores de plugins (opcionais — requerem Telegram configurado em ~/.phpcs-ai.env)
 echo ""
 read -r -p "Instalar monitor de novos plugins Moodle? [s/N] " _reply

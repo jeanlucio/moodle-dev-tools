@@ -25,7 +25,13 @@
 
 set -euo pipefail
 
-CONTAINER="meu-moodle-web-1"
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+CONTAINER="${MDT_CONTAINER_51:-meu-moodle-web-1}"
 DOCROOT="/var/www/html/public"
 PHPUNIT="/var/www/html/vendor/bin/phpunit"
 BOOTSTRAP="$DOCROOT/lib/phpunit/bootstrap.php"

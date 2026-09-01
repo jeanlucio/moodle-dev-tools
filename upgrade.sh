@@ -11,12 +11,22 @@
 
 set -euo pipefail
 
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+C51="${MDT_CONTAINER_51:-meu-moodle-web-1}"
+C45="${MDT_CONTAINER_45:-meu-moodle-web45-1}"
+C52="${MDT_CONTAINER_52:-meu-moodle-web52-1}"
+
 TARGET="${1:-all}"
 case "$TARGET" in
-    51)  CONTAINERS="meu-moodle-web-1" ;;
-    45)  CONTAINERS="meu-moodle-web45-1" ;;
-    52)  CONTAINERS="meu-moodle-web52-1" ;;
-    all) CONTAINERS="meu-moodle-web-1 meu-moodle-web45-1 meu-moodle-web52-1" ;;
+    51)  CONTAINERS="$C51" ;;
+    45)  CONTAINERS="$C45" ;;
+    52)  CONTAINERS="$C52" ;;
+    all) CONTAINERS="$C51 $C45 $C52" ;;
     -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "uso: moodle-upgrade [51|45|52|all]" >&2; exit 1 ;;
 esac

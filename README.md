@@ -281,7 +281,30 @@ O script:
 - Cria o symlink `~/.local/bin/moodle-coverage` → `coverage.sh`
 - Configura `git config --global core.hooksPath ~/.githooks`
 - Cria `~/.phpcs-ai.env` a partir do template (se ainda não existir)
+- Cria `~/.moodle-dev-tools.env` a partir do template (se ainda não existir)
 - Pergunta se deseja instalar o monitor de plugins (opcional)
+
+## Configuração de ambiente (containers, paths)
+
+`coverage.sh`, `check-schema.sh`, `upgrade.sh`, `mirror.sh`, `phpstan.sh`,
+`scope-audit.sh`, `security-audit.sh` e `query-baseline.sh` precisam saber os nomes dos
+containers Docker e os paths do Moodle no host. Esses valores vêm de
+`~/.moodle-dev-tools.env` (não é segredo — nomes de container e paths, não chaves de
+API, que continuam em `~/.phpcs-ai.env`):
+
+```bash
+MDT_MOODLE_ROOT=/path/to/project
+MDT_MOODLE_HTML=/path/to/project/html
+MDT_MOODLE_PUBLIC=/path/to/project/html/public
+MDT_CONTAINER_51=moodle-web-51
+MDT_CONTAINER_45=moodle-web-45
+MDT_CONTAINER_52=moodle-web-52
+```
+
+Sem esse arquivo, cada script usa os valores padrão da máquina de desenvolvimento
+original — funciona, mas aponta para os nomes/paths errados em outro ambiente. Os
+nomes das variáveis (`_51`/`_45`/`_52`) são só um rótulo para "os três alvos que este
+conjunto de scripts assume" — não precisam ser exatamente essas versões do Moodle.
 
 ## Configuração das chaves de API
 

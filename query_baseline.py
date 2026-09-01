@@ -34,6 +34,7 @@ Usage: query_baseline.py <plugin_abs_dir> [options]  (normally via moodle-query-
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -46,7 +47,10 @@ from claude_cli import Clock, call_claude, cached, extract_json, hash_key, run_p
 TOOLS_DIR = Path(__file__).resolve().parent
 EXTENSION_FILE = TOOLS_DIR / 'query_count_extension.php'
 
-CONTAINER = 'meu-moodle-web-1'
+# Inherited from ~/.moodle-dev-tools.env via query-baseline.sh (the CLI entry point),
+# which sources it with `set -a` before invoking this script — falls back to this
+# machine's own values when the wrapper isn't used or the env file doesn't exist.
+CONTAINER = os.environ.get('MDT_CONTAINER_51', 'meu-moodle-web-1')
 DOCROOT = '/var/www/html/public'
 PHPUNIT_BIN = '/var/www/html/vendor/bin/phpunit'
 MOODLE_BOOTSTRAP = f'{DOCROOT}/lib/phpunit/bootstrap.php'
@@ -402,7 +406,8 @@ def main():
         print(f'erro: {exc}', file=sys.stderr)
         return 1
 
-    plugin_abs_host = Path('/home/ubuntu/meu-moodle/html/public') / plugin
+    moodle_public = os.environ.get('MDT_MOODLE_PUBLIC', '/home/ubuntu/meu-moodle/html/public')
+    plugin_abs_host = Path(moodle_public) / plugin
     if not plugin_abs_host.is_dir():
         print(f'erro: {plugin_abs_host} não existe', file=sys.stderr)
         return 1

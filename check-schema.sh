@@ -28,7 +28,13 @@
 
 set -euo pipefail
 
-HOST_ROOT="/home/ubuntu/meu-moodle/html/public"
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+HOST_ROOT="${MDT_MOODLE_PUBLIC:-/home/ubuntu/meu-moodle/html/public}"
 
 # ------------------------------------------------------------------ #
 #  Parse de argumentos                                               #
@@ -44,11 +50,14 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+C51="${MDT_CONTAINER_51:-meu-moodle-web-1}"
+C45="${MDT_CONTAINER_45:-meu-moodle-web45-1}"
+C52="${MDT_CONTAINER_52:-meu-moodle-web52-1}"
 case "$TARGET" in
-    51)  CONTAINERS="meu-moodle-web-1" ;;
-    45)  CONTAINERS="meu-moodle-web45-1" ;;
-    52)  CONTAINERS="meu-moodle-web52-1" ;;
-    all) CONTAINERS="meu-moodle-web-1 meu-moodle-web45-1 meu-moodle-web52-1" ;;
+    51)  CONTAINERS="$C51" ;;
+    45)  CONTAINERS="$C45" ;;
+    52)  CONTAINERS="$C52" ;;
+    all) CONTAINERS="$C51 $C45 $C52" ;;
 esac
 
 # ------------------------------------------------------------------ #

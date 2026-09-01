@@ -42,7 +42,10 @@ from claude_cli import (
 TOOLS_DIR = Path(__file__).resolve().parent
 RULES_FILE = TOOLS_DIR / 'security-rules.md'
 PHPSTAN_BIN = TOOLS_DIR / 'phpstan' / 'vendor' / 'bin' / 'phpstan'
-MOODLE_ROOT = Path('/home/ubuntu/meu-moodle/html')
+# Inherited from ~/.moodle-dev-tools.env via security-audit.sh (the CLI entry point),
+# which sources it with `set -a` before invoking this script — falls back to this
+# machine's own path when the wrapper isn't used or the env file doesn't exist.
+MOODLE_ROOT = Path(os.environ.get('MDT_MOODLE_HTML', '/home/ubuntu/meu-moodle/html'))
 MOODLE_DOCROOT = MOODLE_ROOT / 'public'
 CACHE_DIR = Path.home() / '.moodle-security-audit-cache'
 

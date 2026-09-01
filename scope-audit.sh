@@ -18,7 +18,13 @@
 
 set -euo pipefail
 
-MOODLE="/home/ubuntu/meu-moodle/html/public"
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
+MOODLE="${MDT_MOODLE_PUBLIC:-/home/ubuntu/meu-moodle/html/public}"
 
 PLUGIN=""
 SCOPE_ARGS=()
