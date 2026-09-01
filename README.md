@@ -27,12 +27,13 @@ locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se hou
 seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
 Mustache.
 
-### Gates determinísticos (PHPCS, capability-strings, ESLint, Stylelint, Mustache)
+### Gates determinísticos (PHPCS, capability-strings, get_string, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
+| **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` com os dois argumentos literais aponta pra uma string que existe de verdade | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
@@ -57,6 +58,16 @@ Notas:
   `db/access.php` e `lang/en/*.php` deveriam concordar entre si. Zero falso-positivo testado
   contra os 110 plugins reais montados em `web-1` no dia em que foi criado (01/09/2026) — só
   achado genuíno foi no próprio `mod_lti` do core.
+- **get_string** (`check_get_string.py`) resolve o próprio componente do plugin, `core`/`moodle`,
+  e os tipos já conhecidos por este ecossistema (`mod`/`local`/`block`/`filter`/`report`/`format`/
+  `availability`) via `MDT_MOODLE_PUBLIC`. Um componente desconhecido é **pulado, nunca
+  chutado** — falso negativo é aceitável aqui, falso positivo bloqueando commit não é. Só conta
+  como "literal" um argumento entre aspas simples, ou aspas duplas sem `$`/`{}` (string
+  interpolada não é estática — `"rpg_{$tone}_nome"` vira outra coisa em runtime); qualquer coisa
+  depois disso que não seja `,` ou `)` (ex.: concatenação, `'x_' . $var`) invalida o literal
+  inteiro. Zero falso-positivo depois desse ajuste, testado contra ~10 plugins reais — achou 2
+  bugs genuínos e inéditos no `block_playerhud` (publicado): `get_string('no_items_selected', ...)`
+  e `get_string('validate_number', 'core')`, nenhuma das duas strings existe (01/09/2026).
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).

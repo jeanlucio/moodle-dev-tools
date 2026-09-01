@@ -8,6 +8,14 @@
 
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs --standard=moodle"
 
+# Exporta MDT_MOODLE_PUBLIC (e o resto de ~/.moodle-dev-tools.env) para os gates Python
+# abaixo que precisam resolver componentes fora do próprio plugin (ex.: get_string(..., 'core')).
+if [ -f ~/.moodle-dev-tools.env ]; then
+    set -a
+    source ~/.moodle-dev-tools.env
+    set +a
+fi
+
 ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '\.(php|js|mustache|css|xml)$' \
     | grep -v 'amd/build/')
@@ -84,6 +92,22 @@ if [ -n "$CAP_TRIGGER" ] && [ -f version.php ] && [ -f "$CAP_CHECKER" ]; then
         exit 1
     fi
     echo "capability-strings: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  get_string() — toda chamada com chave e componente literais       #
+#  precisa apontar pra uma string que existe de verdade.              #
+# ------------------------------------------------------------------ #
+GETSTRING_CHECKER="$HOME/moodle-dev-tools/check_get_string.py"
+if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$GETSTRING_CHECKER" ]; then
+    echo "get_string: verificando..."
+    if ! python3 "$GETSTRING_CHECKER" "$(pwd)" $PHP_STAGED; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: get_string() com chave inexistente (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "get_string: OK"
 fi
 
 # ------------------------------------------------------------------ #
