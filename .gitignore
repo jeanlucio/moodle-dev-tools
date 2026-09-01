@@ -1,7 +1,7 @@
 .phpcs-ai.env
+.moodle-dev-tools.env
 __pycache__/
 *.pyc
 phpstan/vendor/
-cron_watchdog.py
-plugin_checks_watchdog.py
 .progress/
+.vscode/
