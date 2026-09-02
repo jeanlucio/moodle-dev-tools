@@ -2,7 +2,7 @@
 
 Ferramentas de automação para desenvolvimento de plugins Moodle:
 
-1. **PHPCS** — padrão Moodle, roda localmente (~60ms), sem custo
+1. **php -l + PHPCS** — sintaxe e padrão Moodle, rodam localmente (~60ms), sem custo
 2. **ESLint + Stylelint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS, CSS e templates)
 3. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que as ferramentas não detectam
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
@@ -20,17 +20,17 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 ---
 
-## Hook 1 — pre-commit: PHPCS + ESLint + Stylelint + Mustache + revisão IA
+## Hook 1 — pre-commit: php -l + PHPCS + ESLint + Stylelint + Mustache + revisão IA
 
-O hook roda em cinco etapas. As quatro primeiras são **gates determinísticos** (ferramentas
-locais, sem custo, sem IA); a quinta é a revisão IA. Cada gate só roda se houver arquivo do
-seu tipo no staging — um commit que mexe só em PHP não dispara ESLint, Stylelint nem o lint
-Mustache.
+O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e, por fim, a
+revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
+só em PHP não dispara ESLint, Stylelint nem o lint Mustache.
 
-### Gates determinísticos (PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
+| **php -l** | `.php` staged | Sintaxe. PHPCS/moodlecheck checam estilo/PHPDoc, não *parse* — um erro de sintaxe passaria batido até o CI (`moodle-plugin-ci phplint`) | Sim |
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
 | **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` com os dois argumentos literais aponta pra uma string que existe de verdade | Sim |
@@ -452,7 +452,7 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 
 ```
 ~/.githooks/
-├── pre-commit              ← symlink → PHPCS + ESLint + Stylelint + Mustache + IA a cada commit
+├── pre-commit              ← symlink → php -l + PHPCS + ESLint + Stylelint + Mustache + IA a cada commit
 └── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
 
 ~/.local/bin/

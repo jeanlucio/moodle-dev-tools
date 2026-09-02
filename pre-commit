@@ -49,6 +49,34 @@ find_up() {
 }
 
 # ------------------------------------------------------------------ #
+#  php -l — sintaxe. O PHPCS/moodlecheck checam estilo e PHPDoc, não  #
+#  parse; um erro de sintaxe passaria até o CI (moodle-plugin-ci      #
+#  phplint) sem esse gate.                                            #
+# ------------------------------------------------------------------ #
+if [ -n "$PHP_STAGED" ]; then
+    echo "php -l: verificando sintaxe..."
+
+    LINT_ERRORS=0
+    while IFS= read -r FILE; do
+        [ -f "$FILE" ] || continue
+        OUTPUT=$(php -l "$FILE" 2>&1)
+        if [ $? -ne 0 ]; then
+            echo "$OUTPUT" | grep -viE 'xdebug|step debug'
+            LINT_ERRORS=1
+        fi
+    done <<< "$PHP_STAGED"
+
+    if [ $LINT_ERRORS -ne 0 ]; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: erro de sintaxe PHP (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+
+    echo "php -l: OK"
+fi
+
+# ------------------------------------------------------------------ #
 #  PHPCS — somente PHP, obrigatório, sem bypass                       #
 # ------------------------------------------------------------------ #
 if [ -n "$PHP_STAGED" ]; then
