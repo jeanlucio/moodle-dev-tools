@@ -32,7 +32,9 @@ import urllib.request
 from pathlib import Path
 
 TABLE_ANCHOR = 'id="stats-downloads-monthly-table"'
-ROW_RE = re.compile(r'<td>(\d{4}-\d{2})</td>\s*<td>(\d+)</td>')
+# The month cell has been both a <td> and (since a 2026 redesign) a <th scope="row">;
+# the downloads cell stays a <td>. Accept either tag for the month.
+ROW_RE = re.compile(r'<t[hd][^>]*>(\d{4}-\d{2})</t[hd]>\s*<td>(\d+)</td>')
 
 
 def fetch_stats_html(marketplace_id: str) -> str:
