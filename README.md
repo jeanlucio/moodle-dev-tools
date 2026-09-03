@@ -13,7 +13,7 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 9. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
 10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 11. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
-12. **Badge de downloads** — `moodle-marketplace-downloads`, gera o `docs/badges/downloads.json` a partir da página de stats do Marketplace (atualização mensal automatizada no companion privado)
+12. **Badge de downloads + resumo mensal** — `moodle-marketplace-downloads` gera o `docs/badges/downloads.json` a partir da página de stats do Marketplace; o companion privado atualiza todas as badges e manda um resumo mensal (instalações + downloads) no Telegram
 
 > `moodle-mirror` (espelhamento de plugins entre containers) não está mais aqui — é específico
 > demais da topologia de um ecossistema multi-versão pra generalizar, e vive no companion privado
@@ -903,9 +903,16 @@ Plugin Directory.
 
 A badge não é dinâmica — a shields.io lê o JSON commitado em tempo real, mas o valor só muda
 quando alguém roda o gerador de novo e commita. Para não congelar, o companion privado
-`moodle-dev-tools-private` tem um `marketplace_downloads_watchdog.py` que, nos primeiros dias
-de cada mês (cron `0 6 1-4 * *`), roda o gerador para **todos** os plugins que já têm a badge,
-commita e dá push num commit por plugin, e só avisa no Telegram quando algo mudou ou deu erro.
+`moodle-dev-tools-private` tem um `marketplace_stats_watchdog.py` que, nos primeiros dias de
+cada mês (cron `0 6 1-4 * *`), roda o gerador para **todos** os plugins que já têm a badge,
+commita e dá push num commit por plugin, e ainda manda um resumo mensal no Telegram
+(instalações ativas + downloads por plugin). Só avisa quando há resumo do mês ou quando algo
+mudou/deu erro.
+
+**Adotar a badge num plugin novo:** rode o gerador uma vez, adicione a linha do badge no
+`README.md`/site de docs, e commite o `docs/badges/downloads.json`. A partir daí o watchdog
+mensal descobre o arquivo sozinho (varre `*/docs/badges/downloads.json`) e passa a atualizar —
+não precisa cadastrar o plugin em lugar nenhum.
 
 ---
 
