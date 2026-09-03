@@ -37,13 +37,15 @@ TABLE_ANCHOR = 'id="stats-downloads-monthly-table"'
 ROW_RE = re.compile(r'<t[hd][^>]*>(\d{4}-\d{2})</t[hd]>\s*<td>(\d+)</td>')
 
 
-def fetch_stats_html(marketplace_id: str) -> str:
+def fetch_stats_html(plugin_ref: str) -> str:
     """Fetch the raw HTML of a plugin's Marketplace stats page.
 
-    @param string $marketplace_id numeric Marketplace plugin id (e.g. "3583")
+    @param string $plugin_ref numeric Marketplace plugin id (e.g. "3583") or the
+                  Frankenstyle name (e.g. "block_playerhud") — the /stats URL
+                  accepts either
     @return string raw page HTML
     """
-    url = f'https://marketplace.moodle.com/plugins/{marketplace_id}/stats'
+    url = f'https://marketplace.moodle.com/plugins/{plugin_ref}/stats'
     request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(request, timeout=20) as response:
         return response.read().decode('utf-8')
@@ -101,15 +103,15 @@ def resolve_docs_dir(plugin_dir: Path) -> Path:
 def main(argv: list[str]) -> int:
     """CLI entry point.
 
-    @param list $argv [plugin_dir, marketplace_id]
+    @param list $argv [plugin_dir, plugin_ref]
     @return int process exit code
     """
     if len(argv) != 3:
-        print('uso: marketplace_downloads.py <caminho-do-plugin> <id-marketplace>', file=sys.stderr)
+        print('uso: marketplace_downloads.py <caminho-do-plugin> <id-ou-frankenstyle>', file=sys.stderr)
         return 1
 
     plugin_dir = Path(argv[1]).resolve()
-    marketplace_id = argv[2]
+    plugin_ref = argv[2]
 
     if not plugin_dir.is_dir():
         print(f'erro: {plugin_dir} não existe', file=sys.stderr)
@@ -117,7 +119,7 @@ def main(argv: list[str]) -> int:
 
     try:
         docs_dir = resolve_docs_dir(plugin_dir)
-        html = fetch_stats_html(marketplace_id)
+        html = fetch_stats_html(plugin_ref)
         rows = extract_monthly_downloads(html)
     except (RuntimeError, OSError) as exc:
         print(f'erro: {exc}', file=sys.stderr)

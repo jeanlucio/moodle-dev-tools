@@ -15,10 +15,11 @@
 # NÃO commita nem dá push — só escreve o arquivo. Revisar e commitar é passo separado.
 #
 # Uso:
-#   moodle-marketplace-downloads <tipo/nome> <id-marketplace>
+#   moodle-marketplace-downloads <tipo/nome> <id-ou-frankenstyle>
 #
-#   <tipo/nome>       : ex. blocks/playerhud (aceita o prefixo html/public/).
-#   <id-marketplace>  : id numérico da URL marketplace.moodle.com/plugins/<id>/stats
+#   <tipo/nome>          : ex. blocks/playerhud (aceita o prefixo html/public/).
+#   <id-ou-frankenstyle> : id numérico (marketplace.moodle.com/plugins/<id>/stats) ou o
+#                          nome Frankenstyle (ex. block_playerhud) — a URL /stats aceita os dois.
 #
 # Exige que o plugin já tenha docs/ (site GitHub Pages) — plugins sem isso ainda não têm
 # onde colocar o JSON fora do ZIP.
@@ -29,22 +30,23 @@ MOODLE="/home/ubuntu/meu-moodle/html/public"
 
 if [ $# -ne 2 ]; then
     if [ $# -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
-        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
     fi
-    echo "uso: moodle-marketplace-downloads <tipo/nome> <id-marketplace>" >&2
+    echo "uso: moodle-marketplace-downloads <tipo/nome> <id-ou-frankenstyle>" >&2
     echo "ex.: moodle-marketplace-downloads blocks/playerhud 3583" >&2
+    echo "ex.: moodle-marketplace-downloads blocks/playerhud block_playerhud" >&2
     exit 1
 fi
 
 PLUGIN="$1"
 PLUGIN="${PLUGIN#./}"; PLUGIN="${PLUGIN#html/public/}"; PLUGIN="${PLUGIN#public/}"; PLUGIN="${PLUGIN%/}"
 PLUGIN_ABS="$MOODLE/$PLUGIN"
-MARKETPLACE_ID="$2"
+PLUGIN_REF="$2"
 
 if [ ! -d "$PLUGIN_ABS" ]; then
     echo "erro: '$PLUGIN_ABS' não existe" >&2
     exit 1
 fi
 
-python3 "$(dirname "$(readlink -f "$0")")/marketplace_downloads.py" "$PLUGIN_ABS" "$MARKETPLACE_ID"
+python3 "$(dirname "$(readlink -f "$0")")/marketplace_downloads.py" "$PLUGIN_ABS" "$PLUGIN_REF"

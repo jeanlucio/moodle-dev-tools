@@ -13,6 +13,7 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 9. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
 10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 11. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
+12. **Badge de downloads** — `moodle-marketplace-downloads`, gera o `docs/badges/downloads.json` a partir da página de stats do Marketplace (atualização mensal automatizada no companion privado)
 
 > `moodle-mirror` (espelhamento de plugins entre containers) não está mais aqui — é específico
 > demais da topologia de um ecossistema multi-versão pra generalizar, e vive no companion privado
@@ -876,6 +877,35 @@ usada pelo `moodle-security-audit` (mesmo `--safe-mode`, mesma remoção de
 
 A ferramenta só lê o plugin auditado — a suíte roda no container, sem tocar o repositório — e
 não faz parte do ZIP do Plugin Directory, é ferramenta de bancada como as demais desta seção.
+
+---
+
+## Badge de downloads — `moodle-marketplace-downloads`
+
+Gera o `docs/badges/downloads.json` de um plugin (schema *endpoint* da shields.io) somando a
+tabela mensal de **12 meses fechados** da página `/stats` do Moodle Marketplace — o mês
+corrente nunca entra. O card do plugin no Marketplace só mostra "últimos 90 dias" e a única
+API de downloads (`local_plugins_get_maintained_plugins`) exige token de mantenedor, então o
+número sai por scraping da própria página (sem login), ancorado no `id` da tabela
+(`stats-downloads-monthly-table`), não em posição.
+
+```bash
+moodle-marketplace-downloads <tipo/nome> <id-ou-frankenstyle>
+# ex.: moodle-marketplace-downloads blocks/playerhud 3583
+# ex.: moodle-marketplace-downloads blocks/playerhud block_playerhud
+```
+
+O 2º argumento pode ser o id numérico da URL (`marketplace.moodle.com/plugins/<id>/stats`) ou
+o nome Frankenstyle — a URL `/stats` aceita os dois. **Não commita nem dá push**: só escreve o
+arquivo, revisar e commitar é passo separado. Exige que o plugin já tenha `docs/` (site GitHub
+Pages); `docs/` já é `export-ignore` no `.gitattributes`, então o JSON não vai pro ZIP do
+Plugin Directory.
+
+A badge não é dinâmica — a shields.io lê o JSON commitado em tempo real, mas o valor só muda
+quando alguém roda o gerador de novo e commita. Para não congelar, o companion privado
+`moodle-dev-tools-private` tem um `marketplace_downloads_watchdog.py` que, nos primeiros dias
+de cada mês (cron `0 6 1-4 * *`), roda o gerador para **todos** os plugins que já têm a badge,
+commita e dá push num commit por plugin, e só avisa no Telegram quando algo mudou ou deu erro.
 
 ---
 
