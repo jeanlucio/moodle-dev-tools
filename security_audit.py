@@ -738,10 +738,32 @@ def compute_grade(findings):
     not "worse" than one stored XSS, yet any penalty-sum model says exactly that. So the
     worst severity present sets a ceiling, and only the count of low findings refines it.
 
-    Calibrated against three published MDL Shield reviews, which this reproduces exactly:
-      block_playerhud        2 low  + 1 info -> A
-      local_information_center 8 low + 1 info -> B+
-      filter_playerhud       1 high + 1 medium + 1 low + 1 info -> D
+    Calibrated (2026-09-04) against 14 real MDL Shield data points: 10 public reviews
+    (mdlshield.com/reviews, Jun-Sep 2026) plus 4 of the author's own dashboard reviews of
+    block_playerhud/filter_playerhud (Apr-Aug 2026, some unpublished). This is the closest
+    deterministic fit to that sample, not a guarantee of an identical grade — MDL Shield's
+    own grading is demonstrably NOT a pure function of severity-label counts: two reviews
+    with an identical "5 low, 0 medium/high/critical" tuple graded A and B+ respectively
+    (tiny_fontcolor vs local_differentiator), and one review with 1 high + 3 medium graded
+    C while a different review with just 1 high + 1 medium graded D (block_playerhud
+    2026-04-29 vs filter_playerhud 2026-08-02) — i.e. MDL Shield weighs each finding's real
+    exploitability, not just the severity label attached to it. Expect occasional
+    disagreement at the boundaries (notably: any single medium, and low counts around 5-6)
+    as an inherent limit of a label-only formula, not a bug in this function.
+
+    Reference points used:
+      filter_playerhud       1 low + 1 info                    -> A   (public, 2026-09-03)
+      tool_userautodelete/tiny_cloze/local_quicknote  4 low     -> A   (public)
+      tiny_fontcolor, local_listcoursefiles           5 low     -> A   (public)
+      local_differentiator                            5 low     -> B+  (public — same count as above, different grade)
+      quizaccess_campla, local_information_center     8 low     -> B+  (public)
+      block_openbook                    1 medium + 3 low        -> B+  (public)
+      local_oc_seasonal_animations      1 medium + 5 low         -> B  (public, but explicitly
+        stated as held down by a non-security functional bug stacked on top, not by the
+        medium alone)
+      filter_playerhud (2026-08-02)     1 high + 1 medium + 1 low + 1 info -> D (dashboard)
+      block_playerhud  (2026-04-29)     1 high + 3 medium + 4 low + 1 info -> C (dashboard)
+      block_playerhud  (2026-04-30)     2 medium + 4 low + 2 info          -> C (dashboard)
     """
     counts = severity_counts(findings)
     if counts['critical']:
@@ -749,8 +771,8 @@ def compute_grade(findings):
     if counts['high']:
         return 'D', 'achado de severidade alta presente'
     if counts['medium']:
-        return 'C', 'achado de severidade média presente'
-    if counts['low'] >= 3:
+        return 'B+', 'achado de severidade média presente'
+    if counts['low'] >= 6:
         return 'B+', f'{counts["low"]} achados de severidade baixa'
     if counts['low']:
         return 'A', f'{counts["low"]} achado(s) de severidade baixa'
@@ -860,10 +882,14 @@ def render_report(ctx):
         add(f'| {sev} | {mark} |')
     add('')
     add('> A nota é **dominada pelo pior achado**, não por soma de penalidades: um `critical`'
-        ' resulta em `F`, um `high` em `D`, um `medium` em `C`; só de `low` a nota é `A`'
-        ' (até 2) ou `B+` (3 ou mais); sem achados, `A+`. Oito falhas de higiene não são'
+        ' resulta em `F`, um `high` em `D`, um `medium` em `B+`; só de `low` a nota é `A`'
+        ' (até 5) ou `B+` (6 ou mais); sem achados, `A+`. Oito falhas de higiene não são'
         ' piores que um XSS armazenado, e um modelo aditivo diria que são. Só achados de'
-        ' segurança contam — bugs de código ficam em seção própria.')
+        ' segurança contam — bugs de código ficam em seção própria. Calibrado sobre uma'
+        ' amostra real de notas do MDL Shield — aproximação mais próxima possível, não'
+        ' garantia de nota idêntica: o próprio MDL Shield já deu notas diferentes para a'
+        ' mesma contagem de achados (a nota real pesa a explorabilidade de cada achado, não'
+        ' só o rótulo de severidade).')
     add('')
 
     # ---- Sumário executivo ------------------------------------------------

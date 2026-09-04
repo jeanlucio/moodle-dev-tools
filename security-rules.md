@@ -82,6 +82,19 @@ o guia oficial — quando as duas falarem do mesmo assunto, esta prevalece por s
   por IA** — usa `{{valor}}` e é sanitizado na escrita (`strip_tags()`/`clean_param()`). Se o
   mesmo campo aparece em mais de uma view, audite **todas**: o bug clássico é uma view irmã
   ficar para trás. *(Pega o achado PH-1.)*
+- **L2-XSS-2** — Vários valores escapados individualmente (cada um já com `s()` ou tipado
+  como inteiro) e concatenados à mão numa única string de atributos `data-*`, emitida via
+  `{{{valor}}}` num template, **não é achado de segurança quando cada valor já está
+  escapado corretamente** — mas é achado `info`/`insecure_config_management`: o sink
+  triple-mustache está fora da rede de auto-escape do Mustache, então uma edição futura que
+  adicione um novo `data-*` sem `s()` não tem barreira alguma. Reporte mesmo com o código
+  atual seguro, recomendando trocar por chaves nomeadas em duplo-mustache
+  (`data-x="{{data_x}}"`) no template, uma por atributo. Não reporte como achado de
+  segurança se o valor concatenado é markup estático de verdade (sem interpolação) — isso é
+  o caso normal do `L2-XSS-1`, não este. *(Achado real: MDL Shield, filter_playerhud,
+  2026-09-03 — `render_drop()`/`drop.mustache`, `$dataattributes`; o
+  `moodle-security-audit` tinha lido o mesmo trecho e classificado como ponto forte, sem
+  esta regra para sinalizar a fragilidade.)*
 - **L2-SAN-1** — Variáveis irmãs atribuídas no mesmo bloco condicional devem ter tratamento
   de saída **consistente**. Se `$a = format_string($x)` e `$b = $y` cru convivem no mesmo
   `if`/`else` e ambas vão para template, `$b` é suspeita — reporte.
