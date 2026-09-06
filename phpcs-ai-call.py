@@ -29,6 +29,47 @@ def _http_error_message(e):
         return str(e)
 
 
+def _extract_openai_content(data):
+    """Return the assistant text from an OpenAI-compatible JSON body.
+
+    Raises RuntimeError with a specific reason when the body carries an error
+    object or contains no usable text, so the pre-commit hook can report *why*
+    a provider produced nothing instead of the generic "resposta ignorada".
+    """
+    if isinstance(data.get('error'), dict):
+        err = data['error']
+        code = err.get('code')
+        msg = err.get('message') or json.dumps(err)[:400]
+        raise RuntimeError(f'API error{f" {code}" if code else ""}: {msg}')
+
+    choices = data.get('choices')
+    if not choices:
+        raise RuntimeError('resposta sem "choices" (corpo inesperado)')
+
+    choice = choices[0]
+    message = choice.get('message') or {}
+    content = message.get('content')
+    if content and content.strip():
+        return content
+
+    # Empty content. Reasoning models can spend the whole token budget on an
+    # internal "reasoning" field and never emit a final answer.
+    reason = choice.get('finish_reason') or 'desconhecido'
+    if reason == 'length':
+        raise RuntimeError(
+            'content vazio (finish_reason=length) — max_tokens esgotado antes '
+            'da resposta; aumente o limite de tokens ou troque de modelo'
+        )
+    if reason == 'content_filter':
+        raise RuntimeError('content vazio (finish_reason=content_filter)')
+    if message.get('reasoning') or message.get('reasoning_content'):
+        raise RuntimeError(
+            f'content vazio (finish_reason={reason}) — só houve texto de '
+            'raciocínio; modelo de reasoning inadequado para este orçamento'
+        )
+    raise RuntimeError(f'content vazio (finish_reason={reason})')
+
+
 def call_gemini(key, prompt):
     url = (
         'https://generativelanguage.googleapis.com/v1beta/models'
@@ -46,10 +87,23 @@ def call_gemini(key, prompt):
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.load(r)
-            return data['candidates'][0]['content']['parts'][0]['text']
     except urllib.error.HTTPError as e:
         first_line = _http_error_message(e).split('\n')[0]
         raise RuntimeError(f'HTTP {e.code}: {first_line}')
+
+    candidates = data.get('candidates')
+    if not candidates:
+        block = (data.get('promptFeedback') or {}).get('blockReason')
+        raise RuntimeError(
+            f'resposta sem candidates (blockReason={block})' if block
+            else 'resposta sem candidates (corpo inesperado)'
+        )
+    parts = (candidates[0].get('content') or {}).get('parts') or []
+    text = ''.join(p.get('text', '') for p in parts)
+    if not text.strip():
+        reason = candidates[0].get('finishReason') or 'desconhecido'
+        raise RuntimeError(f'content vazio (finishReason={reason})')
+    return text
 
 
 def call_openai(url, key, model, prompt, max_tokens=1024):
@@ -68,11 +122,12 @@ def call_openai(url, key, model, prompt, max_tokens=1024):
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.load(r)
-            return data['choices'][0]['message']['content']
     except urllib.error.HTTPError as e:
-        msg = _http_error_message(e)
-        first_line = msg.split('\n')[0]
+        first_line = _http_error_message(e).split('\n')[0]
+        if e.code == 402:
+            raise RuntimeError(f'HTTP 402: sem crédito — {first_line}')
         raise RuntimeError(f'HTTP {e.code}: {first_line}')
+    return _extract_openai_content(data)
 
 
 def _run_claude_cli(model, prompt):
