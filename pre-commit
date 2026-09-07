@@ -474,7 +474,7 @@ start_provider() {
     PIDS+=($!)
 }
 
-[ -n "$GEMINI_KEY" ] && start_provider "Gemini / gemini-2.0-flash" "gemini" "$GEMINI_KEY"
+[ -n "$GEMINI_KEY" ] && start_provider "Gemini / gemini-flash-latest" "gemini" "$GEMINI_KEY"
 [ -n "$GROQ_KEY"   ] && start_provider "Groq / ${GROQ_MODEL}" "groq" "$GROQ_KEY" "$GROQ_URL" "$GROQ_MODEL" "$GROQ_MAX_TOKENS"
 
 for i in "" 2 3 4 5; do
