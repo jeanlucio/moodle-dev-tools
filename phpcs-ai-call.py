@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -17,6 +18,30 @@ USER_AGENT = 'moodle-dev-tools-phpcs-ai-call/1.0'
 # Headless Claude CLI calls include Node/model startup overhead on top of the
 # actual generation, so they get a longer budget than the HTTP providers.
 CLAUDE_CLI_TIMEOUT = 120
+
+# Transient overload/rate-limit codes worth one short retry (e.g. Gemini's
+# "high demand" 503, or an OpenRouter provider momentarily out of capacity).
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+RETRY_DELAY_SECONDS = 2
+
+
+def _post_json(url, headers, payload, timeout=30):
+    """POST payload and return the parsed JSON body.
+
+    Retries once after a short delay on a transient HTTP error, then
+    re-raises the original HTTPError so callers can still branch on e.code
+    (e.g. to special-case 402 "no credit").
+    """
+    req = urllib.request.Request(url, data=payload, headers=headers, method='POST')
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code in RETRYABLE_HTTP_CODES and attempt == 0:
+                time.sleep(RETRY_DELAY_SECONDS)
+                continue
+            raise
 
 
 def _http_error_message(e):
@@ -79,14 +104,9 @@ def call_gemini(key, prompt):
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 1024},
     }).encode()
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={'Content-Type': 'application/json', 'User-Agent': USER_AGENT},
-        method='POST'
-    )
+    headers = {'Content-Type': 'application/json', 'User-Agent': USER_AGENT}
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.load(r)
+        data = _post_json(url, headers, payload)
     except urllib.error.HTTPError as e:
         first_line = _http_error_message(e).split('\n')[0]
         raise RuntimeError(f'HTTP {e.code}: {first_line}')
@@ -118,10 +138,8 @@ def call_openai(url, key, model, prompt, max_tokens=1024):
         'Authorization': f'Bearer {key}',
         'User-Agent': USER_AGENT,
     }
-    req = urllib.request.Request(url, data=body, headers=headers, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.load(r)
+        data = _post_json(url, headers, body)
     except urllib.error.HTTPError as e:
         first_line = _http_error_message(e).split('\n')[0]
         if e.code == 402:

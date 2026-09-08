@@ -343,6 +343,16 @@ GROQ_MODEL="${GROQ_MODEL:-openai/gpt-oss-120b}"
 # a 1024-token budget, leaving content empty before the model ever answers.
 GROQ_MAX_TOKENS="${GROQ_MAX_TOKENS:-4096}"
 
+# Same reasoning-model risk applies to the OpenAI-compatible slots — e.g.
+# deepseek/deepseek-v4-flash on OpenRouter spends its budget on internal
+# reasoning before emitting content. Default each slot's max_tokens to 4096
+# too; override per slot with OPENAI[N]_MAX_TOKENS if needed.
+OPENAI_MAX_TOKENS="${OPENAI_MAX_TOKENS:-4096}"
+OPENAI2_MAX_TOKENS="${OPENAI2_MAX_TOKENS:-4096}"
+OPENAI3_MAX_TOKENS="${OPENAI3_MAX_TOKENS:-4096}"
+OPENAI4_MAX_TOKENS="${OPENAI4_MAX_TOKENS:-4096}"
+OPENAI5_MAX_TOKENS="${OPENAI5_MAX_TOKENS:-4096}"
+
 # Claude CLI (opcional) — roda contra a assinatura Claude Code (não API paga).
 # Usa Fable por padrão; só cai pra Opus se a chamada do Fable falhar (ex.: sem
 # créditos do Fable no momento). Requer o binário "claude" no PATH e sessão
@@ -481,10 +491,12 @@ for i in "" 2 3 4 5; do
     KEY_VAR="OPENAI${i}_KEY"
     URL_VAR="OPENAI${i}_URL"
     MODEL_VAR="OPENAI${i}_MODEL"
+    MAXTOK_VAR="OPENAI${i}_MAX_TOKENS"
     KEY="${!KEY_VAR}"
     URL="${!URL_VAR}"
     MODEL="${!MODEL_VAR}"
-    [ -n "$KEY" ] && start_provider "${MODEL:-OpenAI${i}}" "openai" "$KEY" "$URL" "$MODEL"
+    MAX_TOKENS="${!MAXTOK_VAR}"
+    [ -n "$KEY" ] && start_provider "${MODEL:-OpenAI${i}}" "openai" "$KEY" "$URL" "$MODEL" "$MAX_TOKENS"
 done
 
 if [ $CLAUDE_CLI_AVAILABLE -eq 1 ]; then
