@@ -58,7 +58,7 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state))
 
 
-def append_weekly(plugin: dict, summary: str) -> None:
+def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
     """Accumulates plugin data for the weekly digest (jeanlucio-github-io/scripts/weekly-digest.py)."""
     entries: list = []
     if WEEKLY_FILE.exists():
@@ -71,6 +71,8 @@ def append_weekly(plugin: dict, summary: str) -> None:
         'name': plugin['name'],
         'tipo': component_type_label(plugin['component']),
         'summary': summary,
+        'preco': pricing.get('label', ''),
+        'preco_detalhe': pricing.get('detail', ''),
         'link': f'https://moodle.org/plugins/view.php?plugin={plugin["component"]}',
         'detected_at': datetime.datetime.now().isoformat(timespec='seconds'),
     })
@@ -127,6 +129,38 @@ def fetch_github_description(source_url: str) -> str:
             return data.get('description', '') or ''
     except Exception:
         return ''
+
+
+# ---------------------------------------------------------------------------
+# Enriquecimento: preço no Moodle Marketplace
+# ---------------------------------------------------------------------------
+
+def fetch_marketplace_pricing(component: str) -> dict:
+    """Detects whether a plugin is free or paid on the Moodle Marketplace.
+
+    Since the marketplace migration a plugin listing can be free-to-download or
+    carry a paid licence/subscription. The marketplace renders a price-selector
+    widget (``data-price-selector-target``) only when there is something to buy;
+    free plugins show a plain Download button and no such widget.
+
+    Returns ``{'label': 'gratuito'|'pago'|'', 'detail': '<lowest price>'}``.
+    An empty label means the lookup failed and the caller should not guess.
+    """
+    url = f'https://marketplace.moodle.com/plugins/{component}'
+    req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            html = resp.read().decode('utf-8', 'ignore')
+    except Exception as exc:
+        log(f'  preço indisponível ({component}): {exc}')
+        return {'label': '', 'detail': ''}
+
+    if 'data-price-selector-target' not in html:
+        return {'label': 'gratuito', 'detail': ''}
+
+    amounts = re.findall(r'class="price-amount">\s*([^<]+?)\s*<', html)
+    detail = amounts[0].strip() if amounts else ''
+    return {'label': 'pago', 'detail': detail}
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +224,7 @@ def build_prompt(plugin: dict, github_desc: str) -> str:
 def summarize_gemini(plugin: dict, github_desc: str, key: str) -> str:
     url = (
         'https://generativelanguage.googleapis.com/v1beta/'
-        f'models/gemini-2.0-flash:generateContent?key={key}'
+        f'models/gemini-flash-latest:generateContent?key={key}'
     )
     body = {'contents': [{'parts': [{'text': build_prompt(plugin, github_desc)}]}]}
     result = http_post(url, {}, body)
@@ -230,7 +264,7 @@ def summarize_with_fallback(plugin: dict, github_desc: str, env: dict) -> tuple[
     # Priority order mirrors ~/.phpcs-ai.env: Gemini → Groq → OpenAI-compatible slots.
     if env.get('GEMINI_KEY'):
         providers.append((
-            'Gemini/gemini-2.0-flash',
+            'Gemini/gemini-flash-latest',
             lambda p, g: summarize_gemini(p, g, env['GEMINI_KEY']),
         ))
     if env.get('GROQ_KEY'):
@@ -286,7 +320,17 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
     http_post(url, {}, body)
 
 
-def format_message(plugin: dict, summary: str, provider: str) -> str:
+def format_price_line(pricing: dict) -> str:
+    label = pricing.get('label', '')
+    if label == 'pago':
+        detail = pricing.get('detail', '')
+        return f"💳 Pago (a partir de {detail})" if detail else "💳 Pago"
+    if label == 'gratuito':
+        return "🆓 Gratuito"
+    return "💲 Preço não identificado"
+
+
+def format_message(plugin: dict, summary: str, provider: str, pricing: dict) -> str:
     tipo  = component_type_label(plugin['component'])
     link  = f'https://moodle.org/plugins/view.php?plugin={plugin["component"]}'
     lines = [
@@ -295,6 +339,7 @@ def format_message(plugin: dict, summary: str, provider: str) -> str:
         '',
         summary,
         '',
+        format_price_line(pricing),
         f"[Ver no Plugin Directory]({link})",
         f"_via {provider}_",
     ]
@@ -345,11 +390,14 @@ def main() -> None:
         summary, provider = summarize_with_fallback(plugin, github_desc, env)
         log(f'  Resumo via {provider}')
 
-        msg = format_message(plugin, summary, provider)
+        pricing = fetch_marketplace_pricing(plugin['component'])
+        log(f'  Preço: {pricing["label"] or "desconhecido"} {pricing["detail"]}'.rstrip())
+
+        msg = format_message(plugin, summary, provider, pricing)
         try:
             send_telegram(token, chat_id, msg)
             seen_ids.add(plugin['id'])
-            append_weekly(plugin, summary)
+            append_weekly(plugin, summary, pricing)
             log('  Notificado via Telegram.')
         except Exception as exc:
             log(f'  ERRO ao enviar Telegram: {exc}')

@@ -255,7 +255,7 @@ def build_prompt(plugin_name: str, component: str, release_tag: str, changelog: 
 def summarize_gemini(prompt: str, key: str) -> str:
     url = (
         'https://generativelanguage.googleapis.com/v1beta/'
-        f'models/gemini-2.0-flash:generateContent?key={key}'
+        f'models/gemini-flash-latest:generateContent?key={key}'
     )
     body = {'contents': [{'parts': [{'text': prompt}]}]}
     result = http_post(url, {}, body)
@@ -296,7 +296,7 @@ def summarize_with_fallback(
     # Priority order mirrors ~/.phpcs-ai.env: Gemini → Groq → OpenAI-compatible slots.
     if env.get('GEMINI_KEY'):
         providers.append((
-            'Gemini/gemini-2.0-flash',
+            'Gemini/gemini-flash-latest',
             lambda p: summarize_gemini(p, env['GEMINI_KEY']),
         ))
     if env.get('GROQ_KEY'):
