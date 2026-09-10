@@ -11,8 +11,11 @@ relying on memory.
 Usage:
     python3 scope_audit.py <plugin_dir> [--scope path/to/SCOPE.md]
 
-<plugin_dir> is the plugin's root directory (the one that directly contains SCOPE.md,
-classes/, lang/, etc.). Exits 1 if anything from the tree is missing, 0 otherwise.
+<plugin_dir> is the plugin's root directory (the one that contains classes/, lang/,
+etc.). The SCOPE.md itself is looked up in <plugin_dir>/.plans/SCOPE.md first — .plans
+is a symlink into the separate plans repository, where these documents now live — and
+then in <plugin_dir>/SCOPE.md, the legacy in-repo location. Exits 1 if anything from
+the tree is missing, 0 otherwise.
 """
 
 import argparse
@@ -108,15 +111,31 @@ def load_tree_paths(scope_path: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("plugin_dir", help="Plugin root directory (contains SCOPE.md)")
-    parser.add_argument("--scope", default=None, help="Path to SCOPE.md (default: <plugin_dir>/SCOPE.md)")
+    parser.add_argument("plugin_dir", help="Plugin root directory")
+    parser.add_argument(
+        "--scope",
+        default=None,
+        help="Path to SCOPE.md (default: <plugin_dir>/.plans/SCOPE.md, then <plugin_dir>/SCOPE.md)",
+    )
     args = parser.parse_args()
 
     plugin_dir = args.plugin_dir.rstrip("/")
-    scope_path = args.scope or os.path.join(plugin_dir, "SCOPE.md")
 
-    if not os.path.isfile(scope_path):
-        print(f"error: SCOPE.md not found at {scope_path}", file=sys.stderr)
+    if args.scope:
+        candidates = [args.scope]
+    else:
+        # .plans is a symlink into the plans repository, the current home of these
+        # documents; the plugin-root path is the legacy location, kept as a fallback.
+        candidates = [
+            os.path.join(plugin_dir, ".plans", "SCOPE.md"),
+            os.path.join(plugin_dir, "SCOPE.md"),
+        ]
+
+    scope_path = next((c for c in candidates if os.path.isfile(c)), None)
+
+    if scope_path is None:
+        looked = " or ".join(candidates)
+        print(f"error: SCOPE.md not found at {looked}", file=sys.stderr)
         return 1
 
     raw_paths = load_tree_paths(scope_path)

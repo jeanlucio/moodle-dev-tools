@@ -609,6 +609,11 @@ de memória a partir do critério de aceite em prosa, não contra a árvore lite
 moodle-scope-audit <tipo/nome> [--scope caminho/para/SCOPE.md]
 ```
 
+O `SCOPE.md` é procurado primeiro em `<plugin>/.plans/SCOPE.md` — `.plans` é um symlink para o
+repositório de planejamento, onde esses documentos vivem hoje — e, se não existir, em
+`<plugin>/SCOPE.md`, o local legado dentro do próprio repo do plugin. O `--scope` continua
+disponível para apontar um caminho arbitrário.
+
 Lê a árvore ASCII (`├──`/`└──`/`│`) dentro do bloco de código do §6, reconstrói o caminho
 relativo de cada entrada a partir da indentação, expande listas em chaves (`{a,b,c}_test.php`,
 usadas para compactar vários arquivos de teste parecidos numa linha só — inclusive quando essa

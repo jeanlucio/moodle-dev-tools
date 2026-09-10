@@ -12,7 +12,9 @@
 #   moodle-scope-audit <tipo/nome> [--scope caminho/para/SCOPE.md]
 #
 #   <tipo/nome> : ex. mod/playercross, local/latepenalty (aceita o prefixo html/public/).
-#   --scope     : caminho alternativo para o SCOPE.md, se não for <plugin>/SCOPE.md.
+#   --scope     : caminho alternativo para o SCOPE.md. Por padrão procura em
+#                 <plugin>/.plans/SCOPE.md (symlink para o repo plans, onde esses
+#                 documentos vivem hoje) e, se não achar, em <plugin>/SCOPE.md.
 #
 # Exit 1 se algo do §6 estiver faltando no disco; 0 se completo.
 
@@ -31,7 +33,7 @@ SCOPE_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --scope) SCOPE_ARGS=(--scope "${2:?--scope exige um caminho}"); shift 2 ;;
-        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;
         *) [ -n "$PLUGIN" ] && { echo "erro: informe um plugin só" >&2; exit 1; }; PLUGIN="$1"; shift ;;
     esac
