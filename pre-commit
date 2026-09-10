@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + capability-strings + ESLint + Stylelint + lint Mustache (gates
-# determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só
+# Pre-commit: PHPCS + capability-strings + ESLint + Stylelint + lint Mustache +
+# gherkinlint (gates determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só
 # roda se houver arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
@@ -17,20 +17,21 @@ if [ -f ~/.moodle-dev-tools.env ]; then
 fi
 
 ALL_STAGED=$(git diff --cached --name-only --diff-filter=ACMR \
-    | grep -E '\.(php|js|mustache|css|xml)$' \
+    | grep -E '\.(php|js|mustache|css|xml|feature)$' \
     | grep -v 'amd/build/')
 PHP_STAGED=$(echo "$ALL_STAGED" | grep '\.php$')
 JS_STAGED=$(echo "$ALL_STAGED" | grep '\.js$')
 MUSTACHE_STAGED=$(echo "$ALL_STAGED" | grep '\.mustache$')
 CSS_STAGED=$(echo "$ALL_STAGED" | grep '\.css$')
 XML_STAGED=$(echo "$ALL_STAGED" | grep '\.xml$')
+FEATURE_STAGED=$(echo "$ALL_STAGED" | grep '\.feature$')
 
 # docs/ hosts each plugin's own GitHub Pages site (static, non-Moodle content).
 # The AI review's rules assume Moodle plugin code (path-class CSS scoping,
 # PHPDoc, AMD, etc.) and don't apply there, so it's excluded from that prompt
 # only. PHPCS/ESLint/Mustache above still run on docs/ normally — those checks
 # are generic enough to stay useful (e.g. ESLint on docs/assets/js/*.js).
-AI_STAGED=$(echo "$ALL_STAGED" | grep -v '^docs/')
+AI_STAGED=$(echo "$ALL_STAGED" | grep -v '^docs/' | grep -v '\.feature$')
 
 # Sem arquivos relevantes staged → nada a fazer
 if [ -z "$ALL_STAGED" ]; then
@@ -323,6 +324,40 @@ if { [ -n "$MUSTACHE_STAGED" ] || [ -n "$JS_STAGED" ]; } && [ -f version.php ] &
         exit 1
     fi
     echo "template/module-names: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  gherkinlint — .feature staged, espelha o CI (grunt gherkinlint).   #
+#  Sem este gate, arquivo .feature é o único tipo sem checagem local: #
+#  o erro só aparece no CI, e só na leg com runchecks: all.           #
+# ------------------------------------------------------------------ #
+if [ -n "$FEATURE_STAGED" ]; then
+    GHERKIN_BIN=$(find_up node_modules/.bin/gherkin-lint)
+    GHERKIN_RC=$(find_up .gherkin-lintrc)
+    if [ -z "$GHERKIN_BIN" ] || [ -z "$GHERKIN_RC" ]; then
+        echo "gherkinlint: binário ou .gherkin-lintrc não encontrado na árvore — lint .feature pulado"
+    else
+        echo "gherkinlint: verificando arquivos staged..."
+
+        GHERKIN_ERRORS=0
+        while IFS= read -r FILE; do
+            [ -f "$FILE" ] || continue
+            OUTPUT=$("$GHERKIN_BIN" -c "$GHERKIN_RC" "$FILE" 2>&1)
+            if [ $? -ne 0 ]; then
+                printf '%s\n' "$OUTPUT"
+                GHERKIN_ERRORS=1
+            fi
+        done <<< "$FEATURE_STAGED"
+
+        if [ $GHERKIN_ERRORS -ne 0 ]; then
+            echo "--------------------------------------------------------------"
+            echo "  Commit bloqueado: corrija os erros de gherkinlint acima."
+            echo "--------------------------------------------------------------"
+            exit 1
+        fi
+
+        echo "gherkinlint: OK"
+    fi
 fi
 
 # ------------------------------------------------------------------ #

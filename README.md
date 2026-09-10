@@ -3,7 +3,7 @@
 Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 1. **php -l + PHPCS** — sintaxe e padrão Moodle, rodam localmente (~60ms), sem custo
-2. **ESLint + Stylelint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS, CSS e templates)
+2. **ESLint + Stylelint + gherkinlint + lint Mustache** — gates determinísticos no pre-commit que espelham o CI (JS, CSS, `.feature` e templates)
 3. **Revisão IA paralela** — múltiplos modelos em paralelo cobrem o que as ferramentas não detectam
 4. **Geração de mensagem de commit** — IA gera o texto do commit a partir do diff; você revisa no editor
 5. **Cobertura de testes** — `moodle-coverage`, mede a cobertura de testes de um plugin sob demanda
@@ -21,13 +21,13 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 
 ---
 
-## Hook 1 — pre-commit: php -l + PHPCS + ESLint + Stylelint + Mustache + revisão IA
+## Hook 1 — pre-commit: php -l + PHPCS + ESLint + Stylelint + gherkinlint + Mustache + revisão IA
 
 O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e, por fim, a
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
-só em PHP não dispara ESLint, Stylelint nem o lint Mustache.
+só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -41,6 +41,7 @@ só em PHP não dispara ESLint, Stylelint nem o lint Mustache.
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
 | **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
 | **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
+| **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
@@ -52,6 +53,12 @@ Notas:
 - **Stylelint** filtra do output os avisos "rule is deprecated" que o `.stylelintrc` do Moodle
   sempre imprime (regras antigas mantidas por compatibilidade, não erros do arquivo em si) —
   mantém a saída de falha focada nos problemas reais.
+- **gherkinlint** foi adicionado em 10/09/2026 porque `.feature` era o único tipo de arquivo sem
+  checagem local nenhuma — não entrava nem no filtro de arquivos staged do hook. Um erro trivial
+  (linha em branco duplicada no fim do arquivo) só aparecia no CI, e só na leg que roda todos os
+  checks. Segue a mesma regra do ESLint/Stylelint: sem o binário/config na árvore, é pulado sem
+  bloquear. Note que o `.feature` fica **fora** da revisão IA — tem linter determinístico próprio,
+  e o prompt da revisão é calibrado para código de plugin.
 - **Mustache** faz um check leve, não o validador completo do `moodle-plugin-ci` (que valida
   HTML e contexto de exemplo). O `@template` ausente é o erro que mais quebra o CI; é o que o
   gate garante. A validação de HTML/contexto continua a cargo do CI.
