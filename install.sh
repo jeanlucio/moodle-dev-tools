@@ -110,6 +110,25 @@ if [[ "$_reply" =~ ^[Ss]$ ]]; then
 fi
 
 echo ""
+read -r -p "Instalar monitor de conversas do GitHub sem resposta (Discussions/Issues/PRs)? [s/N] " _reply
+if [[ "$_reply" =~ ^[Ss]$ ]]; then
+    cp github-replies-watch.py "$TOOLS_DIR/github-replies-watch.py"
+    chmod +x "$TOOLS_DIR/github-replies-watch.py"
+
+    if crontab -l 2>/dev/null | grep -q 'github-replies-watch.py'; then
+        echo "Cron do monitor de conversas já configurado — não alterado."
+    else
+        (crontab -l 2>/dev/null; echo "30 9 * * * /usr/bin/python3 $TOOLS_DIR/github-replies-watch.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+        echo "Cron configurado: execução diária às 9h30."
+    fi
+
+    echo ""
+    echo "  Requer 'gh' autenticado (gh auth login) — o monitor usa a conta do gh"
+    echo "  como dono e não precisa de token próprio. Teste o Telegram com:"
+    echo "  python3 $TOOLS_DIR/github-replies-watch.py --test-telegram"
+fi
+
+echo ""
 echo "Instalação concluída."
 echo ""
 echo "Pré-requisitos necessários (verifique manualmente):"

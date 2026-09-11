@@ -1140,3 +1140,51 @@ chmod +x ~/.moodle-dev-tools/core-updates-watch.py
 Ajuste a lista `CONTAINERS` no início do script se um container for renomeado ou o
 mapeamento de docroot mudar (ver `CLAUDE.md` do projeto § Mapeamento container →
 domínio → docroot).
+
+## Monitor de conversas do GitHub sem resposta
+
+Script complementar (`github-replies-watch.py`) que varre **Discussions, Issues abertas e PRs
+abertos** de todos os repositórios da conta autenticada no `gh` e avisa via Telegram quando o
+último a falar numa thread **não é o dono** há pelo menos N dias. Silencioso nos dias em que
+não há nada pendente.
+
+Motivação: Discussions do GitHub notificam de forma bem mais discreta que Issues. Uma sugestão
+de feature no `local_resourcestats` (09/09/2026) quase passou despercebida por isso — e virou
+a v1.4.0 do plugin justamente porque foi vista a tempo.
+
+### Como funciona
+
+- **Critério de "pendente":** quem falou por último. Uma thread conta se a última mensagem
+  (comentário ou resposta aninhada, no caso de Discussions) não for do dono — ou se foi aberta
+  por outra pessoa e ninguém respondeu. Discussions abertas pelo próprio dono sem comentário
+  alheio não contam.
+- **Dono = conta do `gh`** (`gh api user`). Não precisa de token próprio nem configuração: quem
+  rodar o script com o seu `gh` autenticado é o dono. Arquivados são ignorados.
+- **Idade mínima** (`--days`, padrão 1): só avisa quando a última mensagem alheia tem pelo menos
+  N dias — evita avisar de algo que você já vai responder em uma hora.
+- **Dedup em `~/.github-replies-watch-state.json`:** um item já avisado não repete enquanto
+  não houver mensagem nova (o timestamp muda). Se continuar pendente, repete a cada
+  `--remind-days` (padrão 7) como lembrete. Quando o dono responde, o item sai do estado —
+  uma mensagem futura na mesma thread volta a contar como nova.
+- **Telegram em `parse_mode: HTML`**, não Markdown: títulos, logins e nomes de repositório vêm
+  do GitHub e rotineiramente contêm `_` ou `*`, que o Markdown do Telegram trata como
+  formatação e rejeita a mensagem inteira quando desbalanceado. Com HTML, `html.escape()`
+  resolve.
+- `--dry-run` imprime em vez de enviar (e não grava estado); `--test-telegram` manda uma
+  mensagem de teste e sai — use para validar token/chat ao configurar.
+
+### Instalação manual
+
+```bash
+cp github-replies-watch.py ~/.moodle-dev-tools/
+chmod +x ~/.moodle-dev-tools/github-replies-watch.py
+python3 ~/.moodle-dev-tools/github-replies-watch.py --test-telegram   # valida o canal
+python3 ~/.moodle-dev-tools/github-replies-watch.py --dry-run         # vê o que avisaria
+
+# Registra o cron (diário às 9h30)
+(crontab -l; echo "30 9 * * * /usr/bin/python3 $HOME/.moodle-dev-tools/github-replies-watch.py >> $HOME/.moodle-plugins-monitor.log 2>&1") | crontab -
+```
+
+Requer `gh` autenticado (`gh auth login`). Sob cron o ambiente é mínimo — o script resolve
+o binário por caminho absoluto (`/usr/bin/gh`) e o `gh` acha a credencial pelo `HOME`, que o
+cron define; validado rodando com `env -i HOME=$HOME`.
