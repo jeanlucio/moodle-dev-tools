@@ -55,6 +55,85 @@ class ProgressWriter:
                 pass
 
 
+class UsageMeter:
+    """Per-phase tally of what each CLI call reports it consumed.
+
+    The subscription meters usage, not dollars: `cost` is the CLI's own list-price
+    equivalent (modelUsage[*].costBasis == "list"), useful as a relative yardstick for
+    comparing runs and models against the same quota — never an amount actually billed.
+
+    Calls are attributed to whatever phase label Clock.phase() last set. Phases run one
+    after another, so every call in flight belongs to the current phase even when
+    run_parallel() fans it out across threads.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.label = '-'
+        self.phases = {}
+
+    def _bucket(self):
+        return self.phases.setdefault(self.label, {
+            'calls': 0, 'failed': 0, 'cache_hits': 0, 'cost_usd': 0.0,
+            'input_tokens': 0, 'cache_read_tokens': 0, 'output_tokens': 0,
+            'api_seconds': 0.0, 'models': {},
+        })
+
+    def record_hit(self):
+        with self._lock:
+            self._bucket()['cache_hits'] += 1
+
+    def record(self, envelope, failed=False):
+        """Adds one CLI result envelope; `envelope` may be None when stdout was not JSON."""
+        with self._lock:
+            bucket = self._bucket()
+            bucket['failed' if failed else 'calls'] += 1
+            if not isinstance(envelope, dict):
+                return
+            bucket['api_seconds'] += (envelope.get('duration_api_ms') or 0) / 1000
+            # modelUsage rather than the top-level usage/total_cost_usd: one call can touch
+            # more than one model (the CLI runs small side requests on Haiku), and knowing
+            # which model actually served the phase is the point of the comparison.
+            for name, model in (envelope.get('modelUsage') or {}).items():
+                cost = model.get('costUSD') or 0
+                bucket['cost_usd'] += cost
+                bucket['input_tokens'] += (model.get('inputTokens') or 0) + \
+                    (model.get('cacheCreationInputTokens') or 0)
+                bucket['cache_read_tokens'] += model.get('cacheReadInputTokens') or 0
+                bucket['output_tokens'] += model.get('outputTokens') or 0
+                bucket['models'][name] = bucket['models'].get(name, 0) + cost
+
+    def as_dict(self):
+        with self._lock:
+            return json.loads(json.dumps(self.phases))
+
+    def summary_lines(self):
+        """Terminal table, one row per phase plus a total."""
+        phases = self.as_dict()
+        if not phases:
+            return []
+        lines = [f'  {"fase":<5}{"chamadas":>9}{"falhas":>8}{"cache":>7}'
+                 f'{"entrada":>11}{"saída":>9}{"custo eq.":>11}  modelos']
+        total = {'calls': 0, 'failed': 0, 'cache_hits': 0, 'input_tokens': 0,
+                 'cache_read_tokens': 0, 'output_tokens': 0, 'cost_usd': 0.0}
+        for label, p in phases.items():
+            for key in total:
+                total[key] += p[key]
+            models = ', '.join(sorted(p['models'], key=p['models'].get, reverse=True))
+            lines.append(self._row(label, p) + f'  {models}')
+        lines.append(self._row('total', total))
+        return lines
+
+    @staticmethod
+    def _row(label, p):
+        tokens_in = p['input_tokens'] + p['cache_read_tokens']
+        return (f'  {label:<5}{p["calls"]:>9}{p["failed"]:>8}{p["cache_hits"]:>7}'
+                f'{tokens_in:>11,}{p["output_tokens"]:>9,}{"$" + format(p["cost_usd"], ".2f"):>11}')
+
+
+usage = UsageMeter()
+
+
 class Clock:
     """Elapsed-time reporting. Purely local — costs nothing, and a run can last long
     enough that silence is indistinguishable from a hang.
@@ -83,6 +162,7 @@ class Clock:
         self.phase_start_epoch = time.time()
         self.tag = tag
         self.description = description
+        usage.label = tag
         self.tick()
 
     def done(self, note=''):
@@ -169,7 +249,8 @@ def _run_claude(prompt, cwd, model, system_prompt, allow_tools):
             envelope = json.loads(result.stdout)
             err = str(envelope.get('result') or '').strip()
         except (json.JSONDecodeError, AttributeError):
-            err = ''
+            envelope, err = None, ''
+        usage.record(envelope, failed=True)
         if not err:
             err = (result.stderr or result.stdout or '').strip().split('\n')[0]
         raise RuntimeError(err or f'exit {result.returncode}')
@@ -177,8 +258,10 @@ def _run_claude(prompt, cwd, model, system_prompt, allow_tools):
     try:
         envelope = json.loads(result.stdout)
     except json.JSONDecodeError:
+        usage.record(None, failed=True)
         raise RuntimeError('resposta do CLI não é JSON')
 
+    usage.record(envelope, failed=bool(envelope.get('is_error')))
     if envelope.get('is_error'):
         raise RuntimeError(str(envelope.get('result'))[:200])
     text = envelope.get('result')
@@ -317,6 +400,19 @@ def cache_path(cache_dir, franken, phase, key):
     return cache_dir / franken / phase / f'{key}.json'
 
 
+class Uncached(Exception):
+    """Raised by a `compute` callback to hand back `value` WITHOUT caching it.
+
+    For a call that failed (spend limit, network, unparseable reply) and fell back to an
+    empty result: caching that empty result would make every later run silently reuse
+    "no findings" for input that was never actually analysed.
+    """
+
+    def __init__(self, value):
+        super().__init__('uncached result')
+        self.value = value
+
+
 def cached(cache_dir, franken, phase, key, use_cache, compute):
     """Run `compute` unless a cached result for this exact input already exists.
 
@@ -325,15 +421,20 @@ def cached(cache_dir, franken, phase, key, use_cache, compute):
     is money spent twice on the next attempt. `cache_dir` is the caller's own cache root
     (each tool keeps a separate directory, so clearing one never touches the other's cache).
     """
-    if not use_cache:
-        return compute()
     path = cache_path(cache_dir, franken, phase, key)
-    if path.is_file():
+    if use_cache and path.is_file():
         try:
-            return json.loads(path.read_text())
+            result = json.loads(path.read_text())
+            usage.record_hit()
+            return result
         except (OSError, json.JSONDecodeError):
             pass
-    result = compute()
+    try:
+        result = compute()
+    except Uncached as exc:
+        return exc.value
+    if not use_cache:
+        return result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(result, ensure_ascii=False))

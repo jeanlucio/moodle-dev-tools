@@ -35,8 +35,8 @@ from datetime import date
 from pathlib import Path
 
 from claude_cli import (
-    Clock, ProgressWriter, cache_path, cached, call_claude, extract_json, fmt_duration,
-    hash_key, run_parallel,
+    Clock, ProgressWriter, Uncached, cache_path, cached, call_claude, extract_json,
+    fmt_duration, hash_key, run_parallel, usage,
 )
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -324,7 +324,7 @@ def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, 
                 verdicts = extract_json(text)
             except Exception as exc:
                 print(f'  aviso: triagem de um bloco falhou ({exc})', file=sys.stderr)
-                return []
+                raise Uncached([])
             out = []
             for item in verdicts:
                 idx = item.get('index')
@@ -432,7 +432,7 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
                 return findings if isinstance(findings, list) else []
             except Exception as exc:
                 print(f'  aviso: um lote falhou ({exc})', file=sys.stderr)
-                return []
+                raise Uncached([])
 
         return cached(CACHE_DIR, franken, 'scan', _batch_key(plugin_dir, batch),
                      use_cache, compute)
@@ -594,7 +594,7 @@ def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_c
             return groups if isinstance(groups, list) else []
         except Exception as exc:
             print(f'  aviso: deduplicação falhou ({exc})', file=sys.stderr)
-            return []
+            raise Uncached([])
 
     key = hash_key(PROMPT_VERSION, [
         (f.get('title'), f.get('file'), f.get('line'), f.get('description'))
@@ -1093,6 +1093,18 @@ def generate_narrative(ctx, plugin_dir, model, fallback, rules):
 #  main                                                                        #
 # --------------------------------------------------------------------------- #
 
+def append_usage_history(franken, stem, run_usage):
+    """One JSON line per run, kept beside the cache so runs can be compared over time
+    (e.g. before/after a model change) without having kept every report's --json."""
+    path = CACHE_DIR / franken / 'usage-history.jsonl'
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a', encoding='utf-8') as fh:
+            fh.write(json.dumps({'run': stem, **run_usage}, ensure_ascii=False) + '\n')
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('plugin_dir')
@@ -1251,6 +1263,9 @@ def main():
     stem = f'{franken}-{date.today().isoformat()}-{time.strftime("%H%M%S")}'
     report_path = report_dir / f'{stem}.md'
     report_path.write_text(render_report(ctx), encoding='utf-8')
+    ctx['usage'] = {'model': args.model, 'fallback_model': args.fallback_model,
+                    'seconds': round(clock.total()), 'phases': usage.as_dict()}
+    append_usage_history(franken, stem, ctx['usage'])
     if args.json:
         (report_dir / f'{stem}.json').write_text(
             json.dumps(ctx, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -1262,6 +1277,10 @@ def main():
     print('')
     print(f'Relatório: {report_path}')
     print(f'Tempo total: {fmt_duration(clock.total())}')
+    print('')
+    print('Consumo por fase (custo eq. = preço de tabela da API, só para comparar):')
+    for line in usage.summary_lines():
+        print(line)
     clock.finish()
     return 0
 

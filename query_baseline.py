@@ -42,7 +42,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from claude_cli import Clock, call_claude, cached, extract_json, hash_key, run_parallel
+from claude_cli import Clock, Uncached, call_claude, cached, extract_json, hash_key, run_parallel
 
 TOOLS_DIR = Path(__file__).resolve().parent
 EXTENSION_FILE = TOOLS_DIR / 'query_count_extension.php'
@@ -281,7 +281,7 @@ def triage_suspects(rows, plugin_dir, franken, model, fallback, jobs, use_cache)
                 result = extract_json(text)
                 return result if isinstance(result, dict) else {}
             except Exception as exc:
-                return {'verdict': 'indeterminado', 'reason': f'triagem falhou: {exc}'}
+                raise Uncached({'verdict': 'indeterminado', 'reason': f'triagem falhou: {exc}'})
 
         key = hash_key(PROMPT_VERSION, row['test_id'], row['baseline'], row['count'])
         result = cached(CACHE_DIR, franken, 'triage', key, use_cache, compute)
