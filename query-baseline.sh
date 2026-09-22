@@ -20,8 +20,8 @@
 #   --threshold-pct N      : % de aumento pra marcar como suspeito (padrão 50).
 #   --no-triage            : só mostra números/deltas, sem gastar cota da assinatura.
 #   --accept               : grava os números desta rodada como novo baseline.
-#   --model M              : modelo primário da triagem (padrão claude-fable-5).
-#   --fallback-model M     : usado se o primário falhar (padrão claude-opus-5).
+#   --model M              : modelo primário da triagem (padrão claude-fable-5-1).
+#   --fallback-model M     : usado se o primário falhar (padrão claude-opus-5-5).
 #   --jobs N                : chamadas de triagem em paralelo (padrão 5).
 #   --no-cache              : ignora o cache de triagem.
 #

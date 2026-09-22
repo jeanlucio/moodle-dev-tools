@@ -13,8 +13,8 @@
 #   moodle-security-audit <tipo/nome> [opções]
 #
 #   <tipo/nome>          : ex. filter/playerhud, blocks/playerhud (aceita o prefixo html/public/).
-#   --model M            : modelo primário (padrão claude-fable-5).
-#   --fallback-model M   : usado se o primário falhar (padrão claude-opus-5).
+#   --model M            : modelo primário (padrão claude-fable-5-1).
+#   --fallback-model M   : usado se o primário falhar (padrão claude-opus-5-5).
 #   --phpstan-level N    : nível do PHPStan 0..9 (padrão 6). Alto de propósito: a triagem
 #                          por IA é o que torna nível alto utilizável em Moodle.
 #   --no-phpstan         : pula a fase A (PHPStan + triagem) inteiramente.

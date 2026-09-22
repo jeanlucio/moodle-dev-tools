@@ -1096,8 +1096,8 @@ def generate_narrative(ctx, plugin_dir, model, fallback, rules):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('plugin_dir')
-    parser.add_argument('--model', default='claude-fable-5')
-    parser.add_argument('--fallback-model', default='claude-opus-5')
+    parser.add_argument('--model', default='claude-fable-5-1')
+    parser.add_argument('--fallback-model', default='claude-opus-5-5')
     parser.add_argument('--phpstan-level', type=int, default=6)
     parser.add_argument('--no-phpstan', action='store_true',
                         help='pula a fase A (PHPStan + triagem) inteiramente')

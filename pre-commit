@@ -392,8 +392,8 @@ OPENAI5_MAX_TOKENS="${OPENAI5_MAX_TOKENS:-4096}"
 # Usa Fable por padrão; só cai pra Opus se a chamada do Fable falhar (ex.: sem
 # créditos do Fable no momento). Requer o binário "claude" no PATH e sessão
 # logada na máquina que faz o commit. SKIP_CLAUDE_CLI=1 desativa.
-CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-fable-5}"
-CLAUDE_CLI_FALLBACK_MODEL="${CLAUDE_CLI_FALLBACK_MODEL:-claude-opus-5}"
+CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-fable-5-1}"
+CLAUDE_CLI_FALLBACK_MODEL="${CLAUDE_CLI_FALLBACK_MODEL:-claude-opus-5-5}"
 CLAUDE_CLI_AVAILABLE=0
 if [ "${SKIP_CLAUDE_CLI}" != "1" ] && command -v claude >/dev/null 2>&1; then
     CLAUDE_CLI_AVAILABLE=1
