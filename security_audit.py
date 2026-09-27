@@ -176,7 +176,8 @@ def build_inventory(plugin_dir, scan, metadata_only):
         'has_backup': (plugin_dir / 'backup' / 'moodle2').is_dir(),
         'has_access': (plugin_dir / 'db' / 'access.php').is_file(),
         'has_thirdparty': (plugin_dir / 'thirdpartylibs.xml').is_file(),
-        'test_files': len(test_files),
+        'tests_dir_files': len(test_files),
+        'phpunit_tests': len([f for f in test_files if f.endswith('_test.php')]),
         'behat_features': len(features),
     }
 
@@ -929,7 +930,7 @@ def render_report(ctx):
     add('|---|---|')
     add(f'| Entry points (chamam `config.php`) | {len(inv["entry_points"])} |')
     add(f'| Web services (`classes/external/`) | {len(inv["external_ws"])} |')
-    add(f'| Arquivos de teste | {inv["test_files"]} |')
+    add(f'| Arquivos em `tests/` (testes, fixtures, geradores, contextos Behat) | {inv["tests_dir_files"]} |')
     add('')
 
     add('**Evidências de rigor**')
@@ -941,7 +942,7 @@ def render_report(ctx):
     add(f'- {check(inv["has_privacy"])} Privacy API implementada')
     add(f'- {check(inv["has_access"])} Capabilities declaradas (`db/access.php`)')
     add(f'- {check(inv["has_backup"])} Backup/restore (`backup/moodle2/`)')
-    add(f'- {check(inv["test_files"] > 0)} Testes automatizados ({inv["test_files"]} arquivos)')
+    add(f'- {check(inv["phpunit_tests"] > 0)} Testes PHPUnit ({inv["phpunit_tests"]} arquivos `*_test.php`)')
     add(f'- {check(inv["behat_features"] > 0)} Testes Behat ({inv["behat_features"]} features)')
     add('')
 
