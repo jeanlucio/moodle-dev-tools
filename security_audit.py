@@ -160,7 +160,13 @@ def build_inventory(plugin_dir, scan, metadata_only):
         if entry['rel'].startswith('classes/external/'):
             external_ws.append(entry['rel'])
 
-    test_files = [e['rel'] for e in metadata_only if e['rel'].startswith('tests/')]
+    # Behat .feature files are counted straight from disk: collect_files() keeps only the
+    # scannable extensions, so reading them from metadata_only would always find none.
+    features = [
+        str(p.relative_to(plugin_dir)) for p in sorted((plugin_dir / 'tests').rglob('*.feature'))
+        if p.is_file() and not _is_skipped(str(p.relative_to(plugin_dir)))
+    ]
+    test_files = [e['rel'] for e in metadata_only if e['rel'].startswith('tests/')] + features
     return {
         'files_scanned': len(scan),
         'lines_scanned': sum(e['lines'] for e in scan),
@@ -171,7 +177,7 @@ def build_inventory(plugin_dir, scan, metadata_only):
         'has_access': (plugin_dir / 'db' / 'access.php').is_file(),
         'has_thirdparty': (plugin_dir / 'thirdpartylibs.xml').is_file(),
         'test_files': len(test_files),
-        'behat_features': len([f for f in test_files if f.endswith('.feature')]),
+        'behat_features': len(features),
     }
 
 
