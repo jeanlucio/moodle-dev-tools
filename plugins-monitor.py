@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Monitor de novos plugins no Moodle Plugin Directory.
 # Fonte: download.moodle.org/api/1.3/pluglist.php (sem Cloudflare).
-# Detecta plugins novos por ID auto-incremental, busca descrição no GitHub
-# e envia resumo PT-BR via Telegram com fallback chain de IAs.
+# Detecta plugins novos pelo componente (frankenstyle), busca descrição no
+# GitHub e envia resumo PT-BR via Telegram com fallback chain de IAs.
 
 import json
 import re
@@ -48,14 +48,23 @@ def load_env() -> dict:
     return env
 
 
-def load_state() -> dict:
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return {'max_id': 0, 'seen_ids': []}
+def load_seen_components() -> set[str] | None:
+    """Returns the components already known, or None when there is no baseline yet.
+
+    A state file in the legacy ``max_id``/``seen_ids`` format also counts as no
+    baseline: plugin IDs were renumbered by the directory in September 2026, so
+    those IDs no longer identify anything.
+    """
+    if not STATE_FILE.exists():
+        return None
+    state = json.loads(STATE_FILE.read_text())
+    if 'components' not in state:
+        return None
+    return set(state['components'])
 
 
-def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state))
+def save_seen_components(components: set[str]) -> None:
+    STATE_FILE.write_text(json.dumps({'components': sorted(components)}))
 
 
 def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
@@ -92,11 +101,12 @@ def fetch_pluglist() -> dict:
         return json.loads(resp.read())
 
 
-def find_new_plugins(plugins: list, state: dict) -> list:
-    seen_ids = set(state.get('seen_ids', []))
-    max_id   = state.get('max_id', 0)
-    new_ones = [p for p in plugins if p['id'] > max_id and p['id'] not in seen_ids]
-    return sorted(new_ones, key=lambda p: p['id'])
+def find_new_plugins(plugins: list, seen: set[str]) -> list:
+    # IDs are not stable (the directory renumbered all of them once) and were
+    # assigned at submission rather than approval, so only the component name
+    # reliably tells whether a plugin was already listed.
+    new_ones = [p for p in plugins if p.get('component') and p['component'] not in seen]
+    return sorted(new_ones, key=lambda p: p['component'])
 
 
 # ---------------------------------------------------------------------------
@@ -366,17 +376,23 @@ def main() -> None:
         log(f'ERRO ao buscar pluglist: {exc}')
         return
 
-    plugins  = data.get('plugins', [])
-    state    = load_state()
-    new_ones = find_new_plugins(plugins, state)
+    plugins = data.get('plugins', [])
+    seen    = load_seen_components()
+
+    if seen is None:
+        # Without a baseline every listed plugin would look new and flood Telegram.
+        seen = {p['component'] for p in plugins if p.get('component')}
+        save_seen_components(seen)
+        log(f'Sem estado anterior: {len(seen)} componentes registrados como base. Encerrando.')
+        return
+
+    new_ones = find_new_plugins(plugins, seen)
 
     log(f'{len(plugins)} plugins no diretório — {len(new_ones)} novo(s) desde a última verificação.')
 
     if not new_ones:
         log('Nenhum plugin novo. Encerrando.')
         return
-
-    seen_ids = set(state.get('seen_ids', []))
 
     for plugin in new_ones:
         log(f'Processando: [{plugin["id"]}] {plugin["component"]}')
@@ -396,17 +412,19 @@ def main() -> None:
         msg = format_message(plugin, summary, provider, pricing)
         try:
             send_telegram(token, chat_id, msg)
-            seen_ids.add(plugin['id'])
-            append_weekly(plugin, summary, pricing)
-            log('  Notificado via Telegram.')
         except Exception as exc:
+            # Left out of the state so the next run retries it.
             log(f'  ERRO ao enviar Telegram: {exc}')
+        else:
+            append_weekly(plugin, summary, pricing)
+            # Saved per plugin so a crash mid-run never re-sends earlier ones.
+            seen.add(plugin['component'])
+            save_seen_components(seen)
+            log('  Notificado via Telegram.')
 
         time.sleep(1)
 
-    new_max = max(p['id'] for p in plugins)
-    save_state({'max_id': new_max, 'seen_ids': list(seen_ids)})
-    log(f'Estado salvo. max_id={new_max}')
+    log(f'Estado salvo. {len(seen)} componentes conhecidos.')
     log('Concluído.')
 
 

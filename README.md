@@ -976,7 +976,7 @@ português brasileiro via Telegram.
 ### Como funciona
 
 - Consulta a API pública `download.moodle.org/api/1.3/pluglist.php` (sem bloqueio de bot)
-- Detecta novidades pelo ID auto-incremental dos plugins
+- Detecta novidades pelo componente (frankenstyle): compara a lista atual com os componentes já vistos em `~/.moodle-plugins-seen.json`
 - Busca a descrição no repositório GitHub do plugin via GitHub API
 - Gera o resumo em PT-BR com fallback chain de IAs na ordem do `~/.phpcs-ai.env`: Gemini → Groq → slots OpenAI-compatible
 - Envia a notificação via Telegram
