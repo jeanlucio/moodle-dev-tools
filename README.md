@@ -918,8 +918,8 @@ quando alguém roda o gerador de novo e commita. Para não congelar, o companion
 `moodle-dev-tools-private` tem um `marketplace_stats_watchdog.py` que, nos primeiros dias de
 cada mês (cron `0 6 1-4 * *`), roda o gerador para **todos** os plugins que já têm a badge,
 commita e dá push num commit por plugin, e ainda manda um resumo mensal no Telegram
-(instalações ativas + downloads por plugin). Só avisa quando há resumo do mês ou quando algo
-mudou/deu erro.
+(instalações ativas + downloads por plugin). O resumo só sai quando o Marketplace já fechou o
+mês de **todos** os plugins; até lá, manda um aviso de "ainda não disponível" com os pendentes.
 
 **Adotar a badge num plugin novo:** rode o gerador uma vez, adicione a linha do badge no
 `README.md`/site de docs, e commite o `docs/badges/downloads.json`. A partir daí o watchdog
