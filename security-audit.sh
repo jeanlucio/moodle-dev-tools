@@ -23,6 +23,9 @@
 #   --jobs N             : chamadas de IA em paralelo (padrão 3).
 #   --with-moodlecheck   : roda também o local_moodlecheck (PHPDoc; release, não segurança).
 #   --no-verify          : pula o passe de verificação (mais rápido, mais falso positivo).
+#   --with-tests         : lê também a pasta tests/ a fundo. Fica de fora por padrão porque
+#                          custa mais cota (o início da rodada mostra quanto); o MDL Shield lê
+#                          os testes, então vale incluir quando houver cota.
 #   --no-cache           : ignora o cache de lotes.
 #   --json               : grava também o relatório em JSON.
 #   --from-json ARQ      : re-renderiza o relatório de um JSON já gerado, sem refazer a
@@ -50,9 +53,9 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --model|--fallback-model|--phpstan-level|--batch-lines|--jobs|--from-json)
             PASSTHRU+=("$1" "${2:?$1 exige um valor}"); shift 2 ;;
-        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan)
+        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests)
             PASSTHRU+=("$1"); shift ;;
-        -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;
         *) [ -n "$PLUGIN" ] && { echo "erro: informe um plugin só" >&2; exit 1; }; PLUGIN="$1"; shift ;;
     esac

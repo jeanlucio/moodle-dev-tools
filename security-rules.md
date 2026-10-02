@@ -508,6 +508,33 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
   *(MDL Shield: `publisher/exputo/local_profilefield_autofill`, `local_listcoursefiles`,
   `tiny_cloze`, `publisher/uaiblaine/local_unlistedcourses`.)*
 
+**Testes (só quando a auditoria roda com `--with-tests`)**
+
+- **L4-TEST-1** — Teste que não consegue falhar, ou que testa um código que não existe mais:
+  `if (...)` no lugar de `it(...)` num teste JS (as asserções nunca rodam), teste ou provider
+  de privacidade gravando numa coluna removida do `install.xml`, asserção sobre o retorno de
+  sucesso em vez do efeito (o dado gravado). `code_quality`/`robustness`, `low`.
+  *(MDL Shield: `tiny_cloze`, `local_information_center`.)* Sem `--with-tests` a pasta
+  `tests/` não é lida e esta regra não se aplica.
+
+**Quais regras valem dentro de `tests/`.** Teste não roda em produção e existe justamente
+para montar cenários que o código de produção não deveria montar. Antes de reportar algo num
+arquivo de `tests/` (testes PHPUnit, geradores em `tests/generator/`, contextos e features do
+Behat, fixtures), confira esta lista:
+
+- **Valem:** `L4-TEST-1`; cabeçalho GPL e `@package` (`L4-HYG-9` — o Plugin Directory exige em
+  todo arquivo); sintaxe depreciada da versão de PHP suportada (`L4-HYG-3`); e um
+  `L4-BUG-1` que faça o teste não testar o que diz testar (aí reporte como `L4-TEST-1`).
+  Também vale qualquer coisa num arquivo de `tests/` que **o código de produção carrega**
+  (ver `L4-HYG-7`): o defeito, nesse caso, está no código que carrega.
+- **Não valem:** todas as regras de segurança das Camadas 1-3 (o teste não é superfície de
+  ataque: não tem `require_login`, não limpa saída, injeta `$_POST` de propósito); escrita
+  direta em tabela do core ou de outro plugin para montar o cenário (`L4-API-1`, `L4-BP-5`);
+  texto fixo em inglês (`L4-HYG-1`); saída de depuração (`L4-HYG-4`); performance e N+1
+  (`L3-DOS-N1`, `L4-ROB-6`, `L4-BP-1`); validação de formulário e `PARAM_*` (`L4-ROB-1`,
+  `L4-HYG-2`); Privacy API (`L4-PRIV-*`) — o que importa é o provider, não o teste dele.
+- **Na dúvida:** se o "defeito" só existe porque o arquivo é um teste, não reporte.
+
 **Só `info` (não tiram o A+)**
 
 - **L4-INFO-1** — Código morto (classe, função, variável sem uso), reflection para mexer em

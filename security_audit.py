@@ -76,7 +76,8 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 #     moves a severity needs this bump to take effect on a re-run.
 # v5: re-calibrated on all 67 graded public reviews — medium allowed for code_quality,
 #     new Layer 4 rules (L4-BUG-1, L4-VER-*, L4-ROB-6, L4-HYG-7..9, L4-PRIV-2, L4-BP-5).
-PROMPT_VERSION = '5'
+# v6: --with-tests; scan and quality verification told which rules apply inside tests/.
+PROMPT_VERSION = '6'
 
 CLAUDE_TIMEOUT = 900
 
@@ -108,6 +109,10 @@ FINDING_TYPE_LABELS = {
 # recorded in the inventory (test count is evidence of rigour), they are just not scanned.
 SKIP_DIRS = {'amd/build', 'node_modules', 'vendor', '.git', 'docs', '.plans'}
 METADATA_ONLY_DIRS = {'tests', 'lang'}
+# tests/ is metadata-only by default because reading it costs a third to a half more quota
+# per run, yet MDL Shield does read it: two of its public findings were broken tests (one
+# inserting into a removed column, JS tests that can never fail). --with-tests scans it.
+TESTS_DIR = 'tests'
 
 SCAN_EXTENSIONS = {'.php', '.js', '.mustache', '.xml', '.css'}
 # Scanned only where MDL Shield has been seen to find something in them: a README stating
@@ -136,8 +141,12 @@ def _is_skipped(rel):
     return False
 
 
-def collect_files(plugin_dir):
-    """Every candidate file, classified into scan tiers."""
+def collect_files(plugin_dir, include_tests=False):
+    """Every candidate file, classified into scan tiers.
+
+    With include_tests, tests/ moves from the metadata-only tier into the scan.
+    """
+    metadata_dirs = METADATA_ONLY_DIRS - ({TESTS_DIR} if include_tests else set())
     scan, metadata_only = [], []
     for path in sorted(plugin_dir.rglob('*')):
         if not path.is_file():
@@ -155,7 +164,7 @@ def collect_files(plugin_dir):
         except OSError:
             continue
         entry = {'rel': rel, 'lines': lines}
-        if any(rel == d or rel.startswith(d + '/') for d in METADATA_ONLY_DIRS):
+        if any(rel == d or rel.startswith(d + '/') for d in metadata_dirs):
             metadata_only.append(entry)
         else:
             scan.append(entry)
@@ -199,7 +208,9 @@ def build_inventory(plugin_dir, scan, metadata_only):
         str(p.relative_to(plugin_dir)) for p in sorted((plugin_dir / 'tests').rglob('*.feature'))
         if p.is_file() and not _is_skipped(str(p.relative_to(plugin_dir)))
     ]
-    test_files = [e['rel'] for e in metadata_only if e['rel'].startswith('tests/')] + features
+    # Read from both tiers: with --with-tests the test files sit in the scan tier instead.
+    test_files = [e['rel'] for e in scan + metadata_only
+                  if e['rel'].startswith(TESTS_DIR + '/')] + features
     return {
         'files_scanned': len(scan),
         'lines_scanned': sum(e['lines'] for e in scan),
@@ -412,6 +423,10 @@ Procure ativamente, além das regras de segurança:
 - APIs do core contornadas (L4-API-*), Privacy Provider declarando menos do que o plugin
   grava (L4-PRIV-1), texto fixo visível ao usuário (L4-HYG-1).
 
+Arquivos de tests/ (quando estiverem no lote) seguem a lista "Quais regras valem dentro de
+tests/" do catálogo: lá só valem L4-TEST-1, cabeçalho GPL e sintaxe depreciada. Gravar direto
+em tabela, texto fixo, $_POST simulado e consulta em laço são normais num teste.
+
 Seja conservador: só reporte o que tiver certeza. Nada de formatação de código nem PHPDoc.
 Para achados que não são de segurança, aplique a régua low/info do catálogo à risca: "low"
 exige cenário concreto de falha, contorno de API do core ou descumprimento da Privacy API;
@@ -504,6 +519,10 @@ não sobrevive a uma leitura cuidadosa.
 Lembre que em Moodle professor e admin são papéis CONFIÁVEIS por design. Falha que só um
 professor dispara é no máximo "low", a não ser que atinja dados fora do curso dele.
 
+Arquivo em tests/ não é superfície de ataque: o teste não roda em produção. Refute um achado
+de segurança num arquivo de tests/, a não ser que o código de produção carregue esse arquivo
+(aí o defeito está no código que carrega).
+
 Se o defeito é real mas NÃO é de segurança (ninguém ganha acesso, dado ou poder indevido —
 o pior desfecho é a funcionalidade quebrar ou ficar frágil), confirme reclassificando:
 "finding_type" com um dos tipos não-segurança do catálogo e "category" do vocabulário da
@@ -530,7 +549,9 @@ $plugin->requires), o código do core do Moodle. Seja cético: refute quando
   guarda em outra camada);
 - o padrão é o recomendado pelo próprio core ou pelo template oficial, ou não existe API do
   core para fazer aquilo;
-- o "defeito" depende de uma situação que o plugin não deixa acontecer.
+- o "defeito" depende de uma situação que o plugin não deixa acontecer;
+- o arquivo está em tests/ e a regra citada não está entre as que valem para testes (lista
+  "Quais regras valem dentro de tests/" do catálogo).
 
 Se confirmar, decida a severidade pela régua do catálogo — é ela que separa A de A+:
 - "low": cenário concreto de falha (entrada ou configuração real → resultado errado,
@@ -1100,6 +1121,10 @@ def render_report(ctx):
     add('**Escopo analisado**')
     add('')
     add(f'- **{inv["files_scanned"]} arquivos · {inv["lines_scanned"]} linhas** lidos a fundo')
+    if 'tests_scanned' in inv:
+        add('- Testes (`tests/`): ' + ('lidos a fundo (`--with-tests`)' if inv['tests_scanned']
+                                      else 'só contados, não lidos (rode com `--with-tests`'
+                                           ' para incluí-los)'))
     if version.get('release'):
         add(f'- Versão do plugin: {version.get("release")} (`{version.get("version", "?")}`)')
     if version.get('requires'):
@@ -1321,6 +1346,8 @@ def main():
     parser.add_argument('--jobs', type=int, default=5)
     parser.add_argument('--with-moodlecheck', action='store_true')
     parser.add_argument('--no-verify', action='store_true')
+    parser.add_argument('--with-tests', action='store_true',
+                        help='lê também tests/ a fundo (o MDL Shield lê; custa mais cota)')
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--from-json', default=None,
@@ -1374,14 +1401,24 @@ def main():
     franken = version.get('component') or plugin_dir.name
     use_cache = not args.no_cache
 
-    scan_files, metadata_only = collect_files(plugin_dir)
+    scan_files, metadata_only = collect_files(plugin_dir, include_tests=args.with_tests)
     if not scan_files:
         print('erro: nenhum arquivo analisável encontrado', file=sys.stderr)
         return 1
     inventory = build_inventory(plugin_dir, scan_files, metadata_only)
+    inventory['tests_scanned'] = args.with_tests
 
     print(f'Auditando {franken} — {inventory["files_scanned"]} arquivos, '
           f'{inventory["lines_scanned"]} linhas')
+    if args.with_tests:
+        print('  tests/ incluída na leitura (--with-tests)')
+    else:
+        skipped = [e for e in metadata_only if e['rel'].startswith(TESTS_DIR + '/')]
+        if skipped:
+            extra = sum(e['lines'] for e in skipped)
+            share = round(100 * extra / max(inventory['lines_scanned'], 1))
+            print(f'  tests/ fora da leitura: {len(skipped)} arquivos, {extra} linhas '
+                  f'(+{share}% de leitura com --with-tests)')
     print('')
     progress = ProgressWriter(PROGRESS_DIR / f'{franken}.json')
     clock = Clock(progress=progress)

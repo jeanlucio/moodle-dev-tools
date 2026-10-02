@@ -787,6 +787,7 @@ achados — então discordâncias pontuais na fronteira (um `medium`, 5-6 `low`)
 | `--jobs N` | `5` | Chamadas de IA em paralelo |
 | `--with-moodlecheck` | — | Roda também o `local_moodlecheck` (PHPDoc; release, não segurança) |
 | `--no-verify` | — | Pula a Fase D (mais rápido, mais falso positivo) |
+| `--with-tests` | — | Lê também a pasta `tests/` a fundo. Por padrão os testes só são contados: lê-los custa mais cota (o início da rodada mostra quantas linhas a mais), mas o MDL Shield lê, e já reportou testes quebrados como `low` |
 | `--no-cache` | — | Ignora o cache de lotes |
 | `--json` | — | Grava também o relatório em JSON |
 | `--from-json ARQ` | — | Re-renderiza o relatório de um JSON já gerado, sem refazer a análise |
@@ -868,6 +869,7 @@ Shield, em vez de julgar plugin a plugin, no olho.
 moodle-security-audit-calibrate list                     # revisões públicas
 moodle-security-audit-calibrate fetch <revisão>          # baixa o gabarito (sem cota)
 moodle-security-audit-calibrate run <revisão>            # clona, audita e compara (gasta cota)
+moodle-security-audit-calibrate run <revisão> -- --with-tests   # idem, lendo também tests/
 moodle-security-audit-calibrate compare <revisão>        # recompara a última auditoria (sem cota)
 moodle-security-audit-calibrate summary                  # uma linha por revisão comparada
 ```
