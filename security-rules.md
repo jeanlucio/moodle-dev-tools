@@ -72,10 +72,18 @@ Nunca reporte "o plugin não protege contra brute force" para um plugin que não
   coisa.
 - **L1-PERM-2** — Capabilities anotadas com o **risco correto** em `db/access.php`
   (`RISK_XSS`, `RISK_PERSONAL`, `RISK_SPAM`, `RISK_DATALOSS`, `RISK_CONFIG`) e com `captype`
-  coerente (`read` para quem só lê, `write` para quem altera). Risco faltando sem caminho de
-  exploração (ex.: capability de download de dado pessoal sem `RISK_PERSONAL`) é
-  `finding_type: best_practice`, categoria `capability_definition`, severidade `low` — é
-  assim que o MDL Shield classifica (`quiz_exportattemptscsv`).
+  coerente (`read` para quem só lê, `write` para quem altera). Fora de um caminho de
+  exploração, é `finding_type: best_practice`, categoria `capability_definition`, e a
+  severidade depende do que falta:
+  - `low` — falta um `riskbitmask` que avisaria o admin de um risco real ao conceder a
+    capability: dado pessoal de outros usuários sem `RISK_PERSONAL`, conteúdo publicado para
+    outros sem `RISK_SPAM`, HTML gravado sem `RISK_XSS`. É assim que o MDL Shield classifica
+    (`quiz_exportattemptscsv`, download de dado pessoal sem `RISK_PERSONAL`).
+  - `info` — só o `captype` está trocado (`write` numa capability que só lê, ou o contrário),
+    sem risco faltando. O `captype` não muda nenhuma checagem de permissão; serve para a
+    interface de papéis, e o erro não tem cenário de falha.
+    *(Calibração 2026-10-02: o `moodle-security-audit` reportou um `captype` trocado como
+    `low` no `tool_courserating`, revisão que o MDL Shield não penalizou.)*
 - **L1-PERM-3** — Restrição por grupos (`groups_*`) onde for aplicável.
 - **L1-INPUT-1** — **Nunca** acessar `$_GET`, `$_POST` ou `$_REQUEST` diretamente. Use
   `optional_param()`/`required_param()` com o `PARAM_*` adequado, ou moodleform com

@@ -391,6 +391,10 @@ def compare(slug):
             ai, score = matches[index]
             local = audit[ai]
             status = 'sim' if score == 2 else 'mesmo arquivo'
+            if not counts:
+                # An info finding never enters the recall, so a pairing with one is shown
+                # for what it is rather than as a hit that seems to count.
+                status = f'casou com info ({status})'
             if counts and score == 2:
                 stats[key][0] += 1
             local_text = (f'{local.get("title")} (`{local.get("severity")}`, '
@@ -412,6 +416,8 @@ def compare(slug):
     else:
         lines.append('Nenhum.')
     lines += ['', '## Recall (achados low ou acima do MDL encontrados no mesmo local)', '',
+              'Achados `info` do MDL ficam fora: não tiram o A+ lá, então não perdê-los não é '
+              'o que importa.', '',
               '| Tipo | Encontrados | Total |', '|---|---|---|']
     for key, (found, total) in sorted(stats.items()):
         if total:

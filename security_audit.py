@@ -71,7 +71,10 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 # v2: scan prompt gained extra_locations/mitigations; severity calibration rewritten.
 # v3: four finding types (MDL Shield's taxonomy), separate verification for non-security
 #     findings, Layer 4 of the rule catalog.
-PROMPT_VERSION = '3'
+# v4: L1-PERM-2 split — a wrong captype alone is info, a missing riskbitmask stays low.
+#     The catalog is the system prompt but not part of the cache key, so a rule change that
+#     moves a severity needs this bump to take effect on a re-run.
+PROMPT_VERSION = '4'
 
 CLAUDE_TIMEOUT = 900
 
