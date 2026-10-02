@@ -81,6 +81,7 @@ def _line_of(content, offset):
 
 def _finding(check, locations, description_extra=''):
     """Fold every location of one check into a single candidate finding."""
+    locations = list(dict.fromkeys(locations))
     first, rest = locations[0], locations[1:]
     description = check['description']
     if description_extra:
@@ -444,11 +445,175 @@ def check_readme_requirement(plugin_dir, scan_files, version_info):
     }, locations)]
 
 
+def check_superglobals(plugin_dir, scan_files):
+    locations = _grep(plugin_dir, _production_php(scan_files),
+                      re.compile(r'\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)\b'))
+    if not locations:
+        return []
+    return [_finding({
+        'title': 'Acesso direto a superglobais ($_GET, $_POST, $_REQUEST, $_SERVER...)',
+        'finding_type': 'code_quality', 'severity': 'low', 'category': 'core_api_misuse',
+        'rule_id': 'L1-INPUT-1',
+        'description': 'O código lê superglobais diretamente em vez de usar '
+                       'optional_param()/required_param() ou as APIs do core para dados do '
+                       'servidor. Sem limpeza por PARAM_*, o valor chega cru ao código.',
+        'recommendation': 'optional_param()/required_param() com o PARAM_* adequado; para '
+                          '$_SERVER, getremoteaddr(), qualified_me() ou $PAGE->url.',
+    }, locations)]
+
+
+def _thirdparty_locations(plugin_dir):
+    """Paths declared in thirdpartylibs.xml — bundled code the plugin does not own."""
+    content = _read(plugin_dir / 'thirdpartylibs.xml')
+    return [loc.strip().rstrip('/')
+            for loc in re.findall(r'<location>(.*?)</location>', content, re.S)]
+
+
+def _is_thirdparty(rel, locations):
+    return any(rel == loc or rel.startswith(loc + '/') for loc in locations)
+
+
+def check_gpl_header(plugin_dir, scan_files):
+    thirdparty = _thirdparty_locations(plugin_dir)
+    missing = []
+    for entry in scan_files:
+        rel = entry['rel']
+        if not rel.endswith('.php') or _is_thirdparty(rel, thirdparty):
+            continue
+        head = '\n'.join(_read(plugin_dir / rel).splitlines()[:40])
+        if 'GNU General Public License' not in head:
+            missing.append((rel, 1))
+    if not missing:
+        return []
+    return [_finding({
+        'title': 'Arquivo PHP sem o cabeçalho de licença GPL',
+        'finding_type': 'code_quality', 'severity': 'low', 'category': 'packaging',
+        'rule_id': 'L4-HYG-9', 'deterministic': True,
+        'description': 'Estes arquivos não têm o cabeçalho GPL padrão do Moodle nas primeiras '
+                       'linhas, que o Plugin Directory exige em todo arquivo PHP.',
+        'recommendation': 'Acrescentar o cabeçalho GPL padrão logo após <?php.',
+    }, missing)]
+
+
+# Directory of each plugin type relative to the Moodle root, for the install.xml PATH check.
+PLUGIN_TYPE_DIRS = {
+    'mod': 'mod', 'block': 'blocks', 'local': 'local', 'filter': 'filter',
+    'availability': 'availability/condition', 'format': 'course/format', 'report': 'report',
+    'tool': 'admin/tool', 'tiny': 'lib/editor/tiny/plugins', 'qtype': 'question/type',
+    'qbehaviour': 'question/behaviour', 'quizaccess': 'mod/quiz/accessrule',
+    'quiz': 'mod/quiz/report', 'enrol': 'enrol', 'auth': 'auth', 'theme': 'theme',
+    'customfield': 'customfield/field', 'aiprovider': 'ai/provider',
+    'aiplacement': 'ai/placement', 'logstore': 'admin/tool/log/store',
+    'assignsubmission': 'mod/assign/submission', 'assignfeedback': 'mod/assign/feedback',
+    'gradereport': 'grade/report', 'profilefield': 'user/profile/field',
+    'repository': 'repository', 'message': 'message/output', 'booktool': 'mod/book/tool',
+    'datafield': 'mod/data/field', 'certificateelement': 'mod/customcert/element',
+}
+
+
+def check_install_xml_path(plugin_dir, scan_files, version_info):
+    component = version_info.get('component') or ''
+    if '_' not in component:
+        return []
+    plugintype, name = component.split('_', 1)
+    typedir = PLUGIN_TYPE_DIRS.get(plugintype)
+    content = _read(plugin_dir / 'db' / 'install.xml')
+    match = re.search(r'<XMLDB\b[^>]*\bPATH="([^"]*)"', content)
+    if not typedir or not match:
+        return []
+    expected = f'{typedir}/{name}/db'
+    if match.group(1).strip('/') == expected:
+        return []
+    return [_finding({
+        'title': 'db/install.xml com PATH de outro componente',
+        'finding_type': 'code_quality', 'severity': 'low', 'category': 'packaging',
+        'rule_id': 'L4-HYG-9', 'deterministic': True,
+        'description': f'O atributo PATH do <XMLDB> é "{match.group(1)}", mas este plugin fica '
+                       f'em "{expected}" — sinal de cabeçalho copiado de outro componente.',
+        'recommendation': f'Trocar o PATH para "{expected}" (e conferir o COMMENT).',
+    }, [('db/install.xml', _line_of(content, match.start()))])]
+
+
+def check_behat_in_production(plugin_dir, scan_files):
+    pattern = re.compile(r'lib/behat/|behat_util::|/tests/behat/')
+    locations = _grep(plugin_dir, _production_php(scan_files), pattern,
+                      skip_line=lambda text: 'BEHAT_SITE_RUNNING' in text)
+    if not locations:
+        return []
+    return [_finding({
+        'title': 'Infraestrutura de teste do Behat carregada por código de produção',
+        'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
+        'rule_id': 'L4-HYG-7',
+        'description': 'Código que roda em requisições normais inclui ou chama a '
+                       'infraestrutura do Behat, em geral só para descobrir se o site é de '
+                       'teste.',
+        'recommendation': "Usar defined('BEHAT_SITE_RUNNING') e não carregar nada de "
+                          'lib/behat/ fora dos testes.',
+    }, locations)]
+
+
+REMOTE_CSS_RE = re.compile(r"(@import\s+url\(|url\()\s*['\"]?https?://", re.I)
+REMOTE_MARKUP_RE = re.compile(r"<(script|link)\b[^>]*\b(src|href)\s*=\s*['\"]https?://", re.I)
+
+
+def check_remote_resources(plugin_dir, scan_files):
+    locations = []
+    for entry in scan_files:
+        rel = entry['rel']
+        if rel.endswith('.css'):
+            locations += _grep(plugin_dir, [rel], REMOTE_CSS_RE)
+        elif rel.endswith(('.mustache', '.php')) and not rel.startswith(('tests/', 'cli/')):
+            locations += _grep(plugin_dir, [rel], REMOTE_MARKUP_RE)
+    if not locations:
+        return []
+    return [_finding({
+        'title': 'Recurso remoto (fonte, script, estilo) carregado em tempo de execução',
+        'finding_type': 'compliance', 'severity': 'low', 'category': 'privacy_api',
+        'rule_id': 'L4-PRIV-2',
+        'description': 'A página carrega um recurso de um servidor externo, o que entrega o IP '
+                       'e o navegador do usuário a um terceiro. Biblioteca precisa ser '
+                       'empacotada; serviço externo legítimo precisa ser declarado no Privacy '
+                       'Provider.',
+        'recommendation': 'Empacotar a fonte/biblioteca no plugin (declarada em '
+                          'thirdpartylibs.xml) ou, se for um serviço, declará-lo com '
+                          'add_external_location_link().',
+    }, locations)]
+
+
+# Only directory names that mean "someone else's code"; classes/external/ (web services) and
+# lib/ (often the plugin's own helpers) would drown the real hits.
+VENDORED_RE = re.compile(r'(^|/)(vendor|thirdparty|third_party|libraries)/.+\.(js|css|php)$')
+
+
+def check_bundled_without_thirdpartylibs(plugin_dir, scan_files):
+    if (plugin_dir / 'thirdpartylibs.xml').is_file():
+        return []
+    files = _git_files(plugin_dir)
+    if files is None:
+        files = [str(p.relative_to(plugin_dir)) for p in plugin_dir.rglob('*') if p.is_file()]
+    hits = [f for f in files
+            if not f.startswith(('amd/build/', 'tests/', 'node_modules/', '.git/'))
+            and (re.search(r'\.min\.(js|css)$', f) or VENDORED_RE.search(f))]
+    if not hits:
+        return []
+    return [_finding({
+        'title': 'Possível biblioteca de terceiro empacotada sem thirdpartylibs.xml',
+        'finding_type': 'compliance', 'severity': 'low', 'category': 'packaging',
+        'rule_id': 'L4-PRIV-2',
+        'description': 'O pacote tem arquivos com cara de biblioteca de terceiro (minificados '
+                       'fora de amd/build, ou numa pasta vendor/lib/thirdparty) e não tem '
+                       'thirdpartylibs.xml. Confirme se o código é de terceiro.',
+        'recommendation': 'Declarar cada biblioteca em thirdpartylibs.xml (nome, versão, '
+                          'licença, local) com um readme_moodle.txt ao lado.',
+    }, [(f, 1) for f in hits])]
+
+
 CHECKS = [
     check_junk_files, check_logstore, check_raw_http, check_raw_download, check_unserialize,
     check_ddl_outside_upgrade, check_core_table_writes, check_implicit_nullable,
     check_debug_leftovers, check_mod_form_validation, check_lib_define_guard,
-    check_ci_disabled,
+    check_ci_disabled, check_superglobals, check_gpl_header, check_behat_in_production,
+    check_remote_resources, check_bundled_without_thirdpartylibs,
 ]
 
 
@@ -458,4 +623,5 @@ def run_static_checks(plugin_dir, scan_files, version_info):
     for check in CHECKS:
         findings.extend(check(plugin_dir, scan_files))
     findings.extend(check_readme_requirement(plugin_dir, scan_files, version_info))
+    findings.extend(check_install_xml_path(plugin_dir, scan_files, version_info))
     return findings

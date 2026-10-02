@@ -9,11 +9,11 @@ de qualidade, conformidade e boas práticas. Todo achado cita `finding_type`, `c
 
 ### Tipos de achado (`finding_type`)
 
-Os mesmos quatro tipos que o MDL Shield usa, porque a nota pública dele conta **todos**: em
-18 revisões públicas (out/2026), dos 44 achados `low`, só 5 eram de segurança — 26 eram de
-code quality, 7 de best practice e 5 de compliance. Um único `low` de qualquer tipo já tira o
-A+ (`tool_aiagent`: um só achado, `low` code quality → A); `info` não tira (`mod_profilefield`:
-0 `low` + 1 `info` best practice → A+, o único A+ da amostra).
+Os mesmos quatro tipos que o MDL Shield usa, porque a nota pública dele conta **todos**: nas
+67 revisões públicas com nota (todas as do site em 02/10/2026), dos 188 achados `low` só 25
+eram de segurança — 123 eram de code quality, 25 de best practice e 15 de compliance. Um único
+`low` de qualquer tipo já tira o A+ (`tool_aiagent`: um só achado, `low` code quality → A);
+`info` não tira (os 5 A+ da amostra têm zero `low` e, no máximo, um `info`).
 
 | `finding_type` | O que é | `category` |
 |---|---|---|
@@ -85,9 +85,13 @@ Nunca reporte "o plugin não protege contra brute force" para um plugin que não
     *(Calibração 2026-10-02: o `moodle-security-audit` reportou um `captype` trocado como
     `low` no `tool_courserating`, revisão que o MDL Shield não penalizou.)*
 - **L1-PERM-3** — Restrição por grupos (`groups_*`) onde for aplicável.
-- **L1-INPUT-1** — **Nunca** acessar `$_GET`, `$_POST` ou `$_REQUEST` diretamente. Use
-  `optional_param()`/`required_param()` com o `PARAM_*` adequado, ou moodleform com
-  `setType()`.
+- **L1-INPUT-1** — **Nunca** acessar `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE` ou `$_SERVER`
+  diretamente. Use `optional_param()`/`required_param()` com o `PARAM_*` adequado, moodleform
+  com `setType()`, ou as APIs do core para dados do servidor (`getremoteaddr()`, `qualified_me()`,
+  `$PAGE->url`). Sem caminho de exploração (o valor é só comparado, ou só lido para decidir um
+  fluxo), é `finding_type: code_quality`, categoria `core_api_misuse`, `low` — é assim que o
+  MDL Shield classifica nas 5 vezes em que viu isso (`tiny_fontcolor`, `tool_mucertify`,
+  `tool_muprog` duas vezes, `tool_muloginas`).
 - **L1-INPUT-2** — Antes de agir sobre POST: `data_submitted() && confirm_sesskey()`.
 - **L1-INPUT-3** — Passo de confirmação antes de destruir grande volume de dados.
 - **L1-INPUT-4** — Dados de fontes externas (RSS, API, IA) limpos antes do uso.
@@ -95,7 +99,13 @@ Nunca reporte "o plugin não protege contra brute force" para um plugin que não
   mínimo (nomes de curso/atividade); `format_text()` para o resto.
 - **L1-OUT-2** — `noclean` só quando a entrada exigir capability com `RISK_XSS`.
 - **L1-SQL-1** — Sempre DML API com placeholders nomeados/posicionais. Nunca concatenar
-  variável em SQL.
+  variável em SQL. Interpolação **sem** caminho de exploração (valor já tipado como inteiro,
+  constante, nome de tabela vindo do próprio código) é `finding_type: code_quality`, categoria
+  `core_api_misuse`, `low`: o MDL Shield reportou assim 7 vezes (`tool_mucertify`,
+  `tool_muhome`, `tool_mutenancy`, `tool_mutrain`, `customfield_mutrain`,
+  `local_listcoursefiles`, `tool_vault`). Não conta: `$insql` de `get_in_or_equal()`, o
+  fragmento de `get_enrolled_sql()`/`sql_like()`/`sql_concat()`, e coluna de `ORDER BY` já
+  validada contra uma allow-list — são a forma correta da API.
 
 ---
 
@@ -277,8 +287,8 @@ Não nomeadas pelas camadas acima, mas reais nestes plugins (o relatório públi
 ## Camada 4 — Qualidade, conformidade e boas práticas
 
 Achados com `finding_type` diferente de `security`. Derivadas dos achados que o MDL Shield
-publica nesses tipos (amostra de 18 revisões públicas, out/2026) e de achados reais deste
-ecossistema. Contam para a nota exatamente como os de segurança — é isso que o MDL Shield
+publica nesses tipos (todas as 67 revisões públicas com nota, 02/10/2026) e de achados
+reais deste ecossistema. Contam para a nota exatamente como os de segurança — é isso que o MDL Shield
 faz, e é por isso que quase nenhum plugin chega ao A+ lá.
 
 ### Vocabulário de `category` para os tipos não-segurança
@@ -362,9 +372,47 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
   lugar dela; ou config lida (`get_config()`) com um nome que `settings.php`/o upgrade nunca
   gravam (nome antigo após migração, erro de digitação). `code_quality`/`robustness`, `low`.
   *(MDL Shield: `tool_courserating`, `tool_vault`, `local_h5pthemer`.)*
-- **L4-ROB-5** — Retorno de API do core que sinaliza falha com `false` (ex.:
-  `groups_add_member()`, `$DB->get_record()` sem `MUST_EXIST`) ignorado, com o fluxo seguindo
-  como se tivesse dado certo. `code_quality`/`robustness`, `low`.
+- **L4-ROB-5** — Retorno de API do core que sinaliza falha com `false`/`null` ignorado, com o
+  fluxo seguindo como se tivesse dado certo: `groups_add_member()`, `$DB->get_record()` sem
+  `MUST_EXIST` desreferenciado em seguida, `\core_user::get_user()` sem checar o retorno,
+  registro referenciado (curso, módulo, usuário) que pode ter sido apagado e estoura
+  `dml_missing_record_exception`. `code_quality`/`robustness`, `low`.
+  *(MDL Shield: `local_listcoursefiles`, `availability_language`,
+  `availability_coursecompleted`.)*
+- **L4-ROB-6** — Conjunto de resultados sem limite carregado inteiro na memória
+  (`get_records()`/`get_records_sql()` sobre tabela que cresce com o site, numa tarefa
+  agendada, relatório ou web service) quando `get_recordset()` ou paginação resolveriam.
+  `best_practice`/`performance`, `low`. *(MDL Shield: `logstore_xapi`,
+  `local_profilefield_autofill`.)*
+
+**Bugs de código**
+
+- **L4-BUG-1** — Erro concreto de programação que faz o código não fazer o que pretende:
+  argumentos trocados numa chamada do core (`get_config($nome, $plugin)` no lugar de
+  `get_config($plugin, $nome)`, ordem errada em `role_get_name()`), variável ou campo com o nome
+  errado (propriedade inexistente, campo de formulário que não existe, nome de módulo errado
+  numa consulta), `global $CFG`/`$SESSION` esquecido dentro de uma função, operador errado
+  (`|` vs `||`, `&` vs `&&` num `riskbitmask`), espaço faltando ao concatenar SQL, tipo de
+  retorno declarado que a função não respeita. `code_quality`/`robustness`. Severidade:
+  - `medium` quando o erro desliga por completo uma funcionalidade principal para todo mundo
+    numa configuração comum — o MDL Shield deu `medium` (e nota B) para "animações nunca
+    aparecem por argumentos trocados no `get_config()`" (`local_oc_seasonal_animations`) e
+    "espaço faltando no SQL quebra os relatórios" (`tool_mutrain`);
+  - `low` nos demais casos (falha parcial, caminho raro, efeito só cosmético).
+  *(MDL Shield: também `tool_murelation`, `tool_musudo`, `tool_mutenancy`, `tool_mulib`,
+  `mod_mubook`, `quizaccess_campla`.)*
+
+**Versão e ciclo de vida do plugin**
+
+- **L4-VER-1** — `$plugin->requires` abaixo da versão do Moodle que de fato tem as APIs que o
+  plugin usa, ou `$plugin->supported` contradizendo o que o plugin declara/testa (ex.: faixa
+  que pula uma versão no meio). Confira lendo o core da versão mínima: a classe, função ou
+  hook existe lá? `code_quality`/`packaging`, `low`. *(MDL Shield: `local_oc_seasonal_animations`,
+  `quiz_archive`, `local_information_center`, `qtype_guessit`.)*
+- **L4-VER-2** — Plugin que guarda configuração ou dado por curso sem backup/restore, ou que
+  escreve em configuração de **outro** componente (ex.: SCSS do tema, config de outro plugin)
+  sem desfazer isso em `db/uninstall.php`. `best_practice`/`core_api_misuse`, `low`.
+  *(MDL Shield: `block_openbook`, `tiny_fontcolor`, `tool_mulib`.)*
 
 **Higiene que conta como `low`**
 
@@ -381,9 +429,14 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
 - **L4-HYG-4** — `error_log()`, `var_dump()`, `print_r()` sem retorno, `console.log()` ou
   `debugger` em caminho de produção. `code_quality`/`debug_leftover`, `low`.
   *(MDL Shield: `local_stackmatheditor`.)*
-- **L4-HYG-5** — Nome de curso, categoria ou atividade exibido sem `format_string()`. Se não
-  houver caminho de exploração (o valor já foi limpo na escrita), é `code_quality`/
-  `output_api`, `low`; se houver, é `security`/`xss`. *(MDL Shield: `local_h5pthemer`.)*
+- **L4-HYG-5** — Saída sem o escape ou a formatação certa quando não há caminho de exploração
+  (o valor já foi limpo na escrita, ou só um admin o define): nome de curso, categoria ou
+  atividade sem `format_string()`; valor interpolado num `$OUTPUT->confirm()`, num atributo
+  HTML ou num template com `{{{ }}}`; cor/rótulo de configuração impresso cru. É
+  `code_quality` ou `best_practice`/`output_api`, `low`; com caminho de exploração, é
+  `security`/`xss`. *(MDL Shield: `local_h5pthemer`, `mod_mubook` duas vezes,
+  `tool_mutenancy`, `tool_userautodelete`, `enrol_coursecompleted` duas vezes,
+  `local_information_center`.)*
 - **L4-HYG-6** — `defined('MOODLE_INTERNAL') || die();` ausente num arquivo com efeito
   colateral no escopo global. Caso especial: `define()` no topo de um `lib.php`. O MDL Shield
   reporta como `low` (`mod_aiescape`, `mod_elang`), mas o moodle-cs (`MoodleInternalSniff`)
@@ -392,6 +445,22 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
   `code_quality`/`robustness`, `low`, e recomende a correção que satisfaz os dois: trocar os
   `define()` por constantes de classe autoloaded (ex.: `\mod_x\local\constants::FOO`),
   nunca acrescentar a guarda.
+- **L4-HYG-7** — Infraestrutura de teste carregada em produção: `require` de `lib/behat/`,
+  `behat_util::is_test_site()` ou classe de `tests/` chamada por código que roda em toda
+  requisição, só para detectar se o site é de teste. Use `defined('BEHAT_SITE_RUNNING')`.
+  `code_quality`/`robustness`, `low`. *(MDL Shield: `tiny_cloze`, `tiny_multilang2`.)*
+- **L4-HYG-8** — API de front-end depreciada na faixa de versões que o plugin suporta: classes
+  do Bootstrap 4 (`badge-*`, `ml-`/`mr-`, `float-left`, `data-toggle`) num plugin só para
+  Moodle 5.x, `window.event`, módulo AMD que não existe (ex.: `core/bootstrap`),
+  `new moodle_url()` onde o core passou a exigir `moodle_url::routed_path()`.
+  `code_quality`/`deprecated_api`, `low`. Num plugin que suporta 4.5 e 5.x ao mesmo tempo,
+  atributo duplicado de propósito (`data-dismiss` + `data-bs-dismiss`) não conta.
+  *(MDL Shield: `local_agentdetect`, `tiny_multilang2`, `publisher/exputo/local_profilefield_autofill`,
+  `local_oc_seasonal_animations`.)*
+- **L4-HYG-9** — Arquivo PHP sem o cabeçalho de licença GPL do Moodle, ou com cabeçalho copiado
+  de outro componente (ex.: `install.xml` com `PATH`/`COMMENT` de `mod_folder`).
+  `code_quality`/`packaging`, `low`. *(MDL Shield: `local_oc_seasonal_animations`,
+  `mod_gcanvas`.)*
 
 **Conformidade (Privacy API)**
 
@@ -403,7 +472,18 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
   Leia `install.xml` inteiro procurando `userid`/campos de pessoa e compare com o provider.
   `compliance`/`privacy_api`, `low`.
   *(MDL Shield: `format_flexsections`, `local_stackmatheditor`, `report_ldapaccounts`,
-  `tool_realtime`, `tool_vault`.)*
+  `tool_realtime`, `tool_vault` e mais 6 casos na amostra completa.)* Variações também vistas:
+  provider que implementa interfaces contraditórias (`null_provider` junto com
+  `metadata\provider`, `tool_muloginas`); metadata citando string de idioma inexistente ou
+  campo que não existe na tabela (`local_information_center`, `mod_gcanvas`); dado pessoal que
+  sobra quando o curso é apagado (`local_quicknote`); prompt do usuário enviado a serviço de
+  IA externo sem `add_external_location_link()` (`local_activityfilter`).
+- **L4-PRIV-2** — Recurso remoto carregado em tempo de execução, que entrega o IP do usuário a
+  um terceiro sem declaração: `@import url(https://fonts.googleapis.com/...)` no CSS,
+  `<script src="https://...">` ou `<link href="https://...">` num template; ou biblioteca de
+  terceiro empacotada sem `thirdpartylibs.xml`. `compliance`/`privacy_api` (o primeiro) ou
+  `compliance`/`packaging` (o segundo), `low`. *(MDL Shield: `qtype_guessit`,
+  `local_differentiator`.)*
 
 **Boas práticas que contam como `low`**
 
@@ -420,13 +500,23 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
   `Thumbs.db`, `*.swp`, `*.orig`), ou README declarando requisito de Moodle/PHP diferente do
   `version.php`. `code_quality`/`packaging`, `low`.
   *(MDL Shield: `availability_xpstore`, `aiprovider_openwebui`.)*
+- **L4-BP-5** — Funcionalidade do core reimplementada à mão quando existe helper para aquilo:
+  parse de CSV sem `csv_import_reader`, `new file_storage()`/`new stored_file()` em vez de
+  `get_file_storage()`, `INSERT` em `role_capabilities` em vez de `assign_capability()`,
+  escrita direta nas tabelas de `customfield_*` em vez da API de campos personalizados.
+  `best_practice` ou `code_quality`/`core_api_misuse`, `low`.
+  *(MDL Shield: `publisher/exputo/local_profilefield_autofill`, `local_listcoursefiles`,
+  `tiny_cloze`, `publisher/uaiblaine/local_unlistedcourses`.)*
 
 **Só `info` (não tiram o A+)**
 
 - **L4-INFO-1** — Código morto (classe, função, variável sem uso), reflection para mexer em
   propriedade protegida do core, plugin sem testes automatizados, nomes fixos em inglês em
-  componente de data/hora de terceiros. `best_practice`/`dead_code` ou `testing_ci`, `info`.
-  *(MDL Shield: `mod_profilefield` — o único A+ da amostra — teve exatamente um `info`.)*
+  componente de data/hora de terceiros, string de idioma sem uso, nome de função enganoso,
+  `captype` trocado sem risco faltando. `best_practice`/`dead_code` ou `testing_ci`, `info`.
+  *(MDL Shield: dois dos 5 A+ da amostra tiveram exatamente um `info`; os outros três, nenhum
+  achado.)* Exceção: código morto que **quebraria** se fosse alcançado (referência a método ou
+  coluna inexistente, falha de autorização latente) é `low` — `local_differentiator`.
 
 ---
 
@@ -464,7 +554,9 @@ faz, e é por isso que quase nenhum plugin chega ao A+ lá.
     conta como cenário real se o plugin aceita salvá-la.
   - `info` — higiene sem cenário de falha: código morto, fragilidade hipotética a uma mudança
     futura, ausência de testes, estilo de montagem de HTML que hoje está correto.
-  - `medium` ou acima só para `security`. Defeito funcional grave (perda de dado de outros
-    usuários) é `security`/`data_loss`, não `code_quality` alto.
+  - `medium` só em `code_quality`, e só quando o defeito desliga por completo uma
+    funcionalidade principal para todo mundo numa configuração comum (`L4-BUG-1`). `high` e
+    `critical` são só para `security`: perda de dado de outros usuários é `security`/
+    `data_loss`, não `code_quality` alto.
 - Não reporte estilo de formatação nem PHPDoc — PHPCS e moodlecheck cobrem isso. Texto fixo
   visível ao usuário não é estilo: é `L4-HYG-1`.

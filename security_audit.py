@@ -74,7 +74,9 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 # v4: L1-PERM-2 split — a wrong captype alone is info, a missing riskbitmask stays low.
 #     The catalog is the system prompt but not part of the cache key, so a rule change that
 #     moves a severity needs this bump to take effect on a re-run.
-PROMPT_VERSION = '4'
+# v5: re-calibrated on all 67 graded public reviews — medium allowed for code_quality,
+#     new Layer 4 rules (L4-BUG-1, L4-VER-*, L4-ROB-6, L4-HYG-7..9, L4-PRIV-2, L4-BP-5).
+PROMPT_VERSION = '5'
 
 CLAUDE_TIMEOUT = 900
 
@@ -413,7 +415,8 @@ Procure ativamente, além das regras de segurança:
 Seja conservador: só reporte o que tiver certeza. Nada de formatação de código nem PHPDoc.
 Para achados que não são de segurança, aplique a régua low/info do catálogo à risca: "low"
 exige cenário concreto de falha, contorno de API do core ou descumprimento da Privacy API;
-o resto é "info". Severidade "medium" ou acima é só para "security".
+o resto é "info". Fora de "security", "medium" só para "code_quality" que desliga por
+completo uma funcionalidade principal (L4-BUG-1); "high"/"critical" só para "security".
 
 Responda APENAS com um array JSON (vazio se nada encontrado):
 [{
@@ -535,12 +538,14 @@ Se confirmar, decida a severidade pela régua do catálogo — é ela que separa
   para aquilo, ou descumprimento da Privacy API;
 - "info": higiene sem cenário de falha (código morto, fragilidade hipotética a mudança futura,
   ausência de testes).
-Nunca acima de "low". Se durante a leitura você perceber que o defeito é na verdade de
+- "medium": só para code_quality, quando o defeito desliga por completo uma funcionalidade
+  principal para todo mundo numa configuração comum (L4-BUG-1).
+Nunca acima disso. Se durante a leitura você perceber que o defeito é na verdade de
 segurança (alguém ganha acesso, dado ou poder indevido), confirme com "finding_type":
 "security", uma das 15 categorias oficiais e a severidade de segurança correspondente.
 
 Responda APENAS com JSON:
-{"verdict": "confirmed|refuted", "severity": "low|info (ou severidade de segurança)",
+{"verdict": "confirmed|refuted", "severity": "medium|low|info (ou severidade de segurança)",
  "finding_type": "code_quality | compliance | best_practice | security",
  "category": "categoria final",
  "reason": "por que confirma ou refuta, citando o código",
@@ -554,15 +559,20 @@ def normalize_finding(finding):
     """Coerce the type/severity pair into the combinations the grade understands.
 
     Anything without a known finding_type is treated as security (every finding was security
-    before the four types existed, so older JSON reports stay meaningful), and a non-security
-    finding is capped at low — the catalog reserves medium and above for security.
+    before the four types existed, so older JSON reports stay meaningful). Outside security
+    the catalog caps severity: code_quality may reach medium (a bug that switches a main
+    feature off entirely — MDL Shield graded two such cases medium), compliance and
+    best_practice stop at low.
     """
     if finding.get('finding_type') not in FINDING_TYPES:
         finding['finding_type'] = 'security'
     if finding.get('severity') not in SEVERITY_ORDER:
         finding['severity'] = 'info'
-    if finding['finding_type'] != 'security' and finding['severity'] in ('critical', 'high',
-                                                                         'medium'):
+    ftype, severity = finding['finding_type'], finding['severity']
+    if ftype == 'code_quality' and severity in ('critical', 'high'):
+        finding['severity'] = 'medium'
+    elif ftype in ('compliance', 'best_practice') and severity in ('critical', 'high',
+                                                                   'medium'):
         finding['severity'] = 'low'
     return finding
 
@@ -867,34 +877,38 @@ def compute_grade(findings):
     "worse" than one stored XSS, yet any penalty-sum model says exactly that. So the worst
     severity present sets a ceiling, and only the count of low findings refines it.
 
-    Every finding type counts, the way MDL Shield's public grade does. Re-calibrated
-    (2026-10-02) on 18 public reviews (mdlshield.com/reviews, Sep-Oct 2026) that label each
-    finding with its type: 44 lows, of which 26 code quality, 7 best practice, 5 compliance
-    and only 5 security. The rule they show:
-      - any low, of any type, caps the grade at A: tool_aiagent has a single finding (a low
-        code-quality unserialize()) and got A;
-      - info does not: mod_profilefield (0 low + 1 info best practice) is the only A+ in the
-        sample;
-      - one security medium gives B+ (availability_xpstore: 1 medium + 3 low);
-      - 1 to 5 lows stayed A in every one of the 17 A reviews.
+    Every finding type counts, the way MDL Shield's public grade does. Calibrated
+    (2026-10-02) on all 67 graded public reviews on mdlshield.com (Apr-Oct 2026), grade by
+    (medium, low) counts:
+      - A+ (5): zero low and zero medium, with at most one info.
+      - A (50): 1-4 low in 48 of them; 5 low twice; 7 low once.
+      - B+ (10): one medium in 7 (with 2-7 low); no medium but 5 low (twice) or 8 low (twice).
+      - B (2): two medium (tool_mutrain), or one code-quality medium + 5 low
+        (local_oc_seasonal_animations, which the review says was held down by that bug).
+    So: any low caps at A; 1-4 low is always A; 5-7 low is a coin toss between A and B+
+    (identical count tuples got both grades), resolved here as A with a warning in the
+    reason; 8+ low is always B+. One medium is B+ (7 of 8 cases); two are B.
 
-    Earlier data points (2026-09-04 calibration, kept because they cover the rest of the
-    scale): 5 low graded A (tiny_fontcolor) and B+ (local_differentiator); 8 low -> B+
-    (quizaccess_campla, local_information_center); 1 high + 1 medium + 1 low + 1 info -> D
-    (filter_playerhud 2026-08-02); 1 high + 3 medium + 4 low -> C (block_playerhud
-    2026-04-29). MDL Shield's grade is not a pure function of the counts — those two pairs
-    prove it weighs each finding's real impact — so expect occasional disagreement at the
-    boundaries (a single medium, 5-6 lows) as an inherent limit of a label-only formula.
+    No public review has a high or critical finding. Those ceilings come from the author's
+    own dashboard reviews: 1 high + 1 medium + 1 low + 1 info -> D (filter_playerhud
+    2026-08-02); 1 high + 3 medium + 4 low -> C (block_playerhud 2026-04-29). MDL Shield's
+    grade is not a pure function of the counts — the 5-7 low band proves it — so expect
+    disagreement at the boundaries as an inherent limit of a label-only formula.
     """
     counts = severity_counts(findings)
     if counts['critical']:
         return 'F', 'achado crítico presente'
     if counts['high']:
         return 'D', 'achado de severidade alta presente'
+    if counts['medium'] >= 2:
+        return 'B', f'{counts["medium"]} achados de severidade média'
     if counts['medium']:
         return 'B+', 'achado de severidade média presente'
-    if counts['low'] >= 6:
+    if counts['low'] >= 8:
         return 'B+', f'{counts["low"]} achados de severidade baixa'
+    if counts['low'] >= 5:
+        return 'A', (f'{counts["low"]} achados de severidade baixa — faixa de fronteira: com 5 a'
+                     ' 7 lows o MDL Shield já deu tanto A quanto B+')
     if counts['low']:
         return 'A', f'{counts["low"]} achado(s) de severidade baixa'
     if counts['info']:
@@ -1064,12 +1078,13 @@ def render_report(ctx):
     add('| **total** | ' + ' | '.join(totals) + ' |')
     add('')
     add('> A nota é **dominada pelo pior achado**, não por soma de penalidades: um `critical`'
-        ' resulta em `F`, um `high` em `D`, um `medium` em `B+`; só de `low` a nota é `A`'
-        ' (até 5) ou `B+` (6 ou mais); sem `low`, `A+` — achados `info` não tiram o A+.'
-        ' **Os quatro tipos contam**, como na nota pública do MDL Shield: um único `low` de'
-        ' qualidade de código já limita a nota a `A`. Calibrado sobre 18 revisões públicas do'
-        ' MDL Shield — aproximação mais próxima possível, não garantia de nota idêntica: o'
-        ' próprio MDL Shield já deu notas diferentes para a mesma contagem de achados.')
+        ' resulta em `F`, um `high` em `D`, dois `medium` em `B`, um `medium` em `B+`; só de'
+        ' `low` a nota é `A` (até 7, com 5 a 7 sendo fronteira) ou `B+` (8 ou mais); sem `low`,'
+        ' `A+` — achados `info` não tiram o A+. **Os quatro tipos contam**, como na nota'
+        ' pública do MDL Shield: um único `low` de qualidade de código já limita a nota a `A`.'
+        ' Calibrado sobre as 67 revisões públicas com nota do MDL Shield — aproximação mais'
+        ' próxima possível, não garantia de nota idêntica: o próprio MDL Shield já deu notas'
+        ' diferentes para a mesma contagem de achados.')
     add('')
 
     # ---- Sumário executivo ------------------------------------------------

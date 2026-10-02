@@ -725,7 +725,11 @@ pública: arquivo de sistema no pacote (`.DS_Store`), leitura de `logstore_stand
 sem o cliente do core, download com `header()`/`readfile()`, `unserialize()` sem
 `allowed_classes`, DDL fora do upgrade, escrita direta em tabela do core, parâmetro
 implicitamente nullable, saída de depuração, `mod_form.php` sem `validation()`, `define()` no
-`lib.php` sem guarda, CI com checagens desligadas e README contradizendo o `version.php`.
+`lib.php` sem guarda, CI com checagens desligadas, README contradizendo o `version.php`,
+superglobais (`$_POST`, `$_SERVER`...), arquivo PHP sem cabeçalho GPL, `install.xml` com
+`PATH` de outro componente, infraestrutura do Behat carregada em produção, recurso remoto
+(fonte, script) carregado em tempo de execução e biblioteca empacotada sem
+`thirdpartylibs.xml`.
 
 Precisão de grep basta para levantar um candidato, não para confirmar: `curl_init()` dentro de
 um wrapper que já aplica as regras do admin é legítimo. Por isso quase todo achado dessas
@@ -743,19 +747,29 @@ tipos**:
 |---|---|
 | `critical` | **F** |
 | `high` | **D** |
-| `medium` (só existe em segurança) | **B+** |
-| 6+ `low` | **B+** |
-| 1–5 `low` | **A** |
+| 2+ `medium` | **B** |
+| 1 `medium` | **B+** |
+| 8+ `low` | **B+** |
+| 5–7 `low` | **A** (fronteira: o MDL Shield já deu A e B+ para essas contagens) |
+| 1–4 `low` | **A** |
 | nenhum `low` (só `info`, ou nada) | **A+** |
+
+`medium` existe em segurança e, raramente, em qualidade de código: um bug que desliga por
+completo uma funcionalidade principal (o MDL Shield deu `medium` duas vezes nesse caso).
 
 O relatório mostra também a **nota só de segurança**, para continuidade com os relatórios
 anteriores à inclusão dos outros tipos.
 
-Por que os quatro tipos contam: em 18 revisões públicas do MDL Shield (out/2026), dos 44
-achados `low`, só 5 eram de segurança — 26 eram de qualidade de código, 7 de boa prática e 5
-de conformidade. Um único `low` de qualidade basta para tirar o A+ (`tool_aiagent`: um achado
-só, `low` de qualidade → A); `info` não tira (`mod_profilefield`, o único A+ da amostra, tem
-um `info`). Uma nota que só contasse segurança daria A+ a plugins que lá tiram A.
+Por que os quatro tipos contam: nas 67 revisões públicas com nota do MDL Shield (todas as do
+site em 02/10/2026), dos 188 achados `low` só 25 eram de segurança — 123 eram de qualidade de
+código, 25 de boa prática e 15 de conformidade. Um único `low` de qualidade basta para tirar o
+A+ (`tool_aiagent`: um achado só, `low` de qualidade → A); `info` não tira (os 5 A+ da amostra
+têm zero `low` e no máximo um `info`). Uma nota que só contasse segurança daria A+ a plugins
+que lá tiram A.
+
+Aplicada às contagens das 67 revisões, a fórmula reproduz **64** notas (a versão anterior,
+calibrada em 18 revisões, reproduzia 62). As 3 que ela erra estão na faixa de 5 a 7 `low`,
+onde contagens idênticas receberam A e B+ do próprio MDL Shield.
 
 O modelo aditivo original (100 − penalidades) foi abandonado porque distorce o relatório: ele
 diz que oito falhas de higiene são piores que um XSS armazenado. A curva ainda não é uma
