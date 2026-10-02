@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# moodle-security-audit — auditoria de segurança de um plugin Moodle: ferramentas
+# moodle-security-audit — auditoria de um plugin Moodle nos mesmos quatro tipos de achado do
+# MDL Shield (segurança, qualidade de código, conformidade, boa prática): ferramentas
 # determinísticas + revisão por IA, num relatório único.
 #
 # Complementa o pre-commit, que revisa DIFFS. Achado que exige ler o plugin inteiro e seguir
@@ -51,7 +52,7 @@ while [ $# -gt 0 ]; do
             PASSTHRU+=("$1" "${2:?$1 exige um valor}"); shift 2 ;;
         --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan)
             PASSTHRU+=("$1"); shift ;;
-        -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;
         *) [ -n "$PLUGIN" ] && { echo "erro: informe um plugin só" >&2; exit 1; }; PLUGIN="$1"; shift ;;
     esac

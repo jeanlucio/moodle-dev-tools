@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Security audit of a single Moodle plugin: deterministic tools + AI review.
+"""Audit of a single Moodle plugin: deterministic tools + AI review.
+
+Covers the same four finding types MDL Shield grades on — security, code quality,
+compliance and best practice — so the grade here tracks the public one there.
 
 Pipeline (see README "Auditoria de segurança"):
-  A. deterministic collection (PHPStan at a high level, bundled-library versions,
-     schema drift, optionally moodlecheck/coverage)
-  B. AI triage of the deterministic output — separates real bugs from Moodle-idiom
-     noise, which is what makes a high PHPStan level usable at all
+  A. deterministic collection (PHPStan at a high level, pattern checks from
+     audit_static_checks.py, bundled-library versions, optionally moodlecheck)
+  B. AI triage of the PHPStan output — separates real bugs from Moodle-idiom noise, which
+     is what makes a high PHPStan level usable at all
   C. AI semantic scan, batched, with read-only tools so the agent can follow call
      chains beyond its own batch
-  D. AI verification pass — every candidate must be confirmed exploitable or refuted
+  D. AI verification pass — every candidate from A, B and C must be confirmed or refuted:
+     security ones on exploitability, the other types on whether the defect is real
   E. AI dedup pass — batches (C) and per-candidate verification (D) run in isolation
      from each other, so the same root cause found from two different angles (two
      files in different batches, or the same file read twice) survives as two
@@ -34,6 +38,7 @@ import time
 from datetime import date
 from pathlib import Path
 
+from audit_static_checks import run_static_checks
 from claude_cli import (
     Clock, ProgressWriter, Uncached, cache_path, cached, call_claude, extract_json,
     fmt_duration, hash_key, run_parallel, usage,
@@ -64,7 +69,9 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 
 # Bumped whenever a prompt changes, so cached results from an older prompt are not reused.
 # v2: scan prompt gained extra_locations/mitigations; severity calibration rewritten.
-PROMPT_VERSION = '2'
+# v3: four finding types (MDL Shield's taxonomy), separate verification for non-security
+#     findings, Layer 4 of the rule catalog.
+PROMPT_VERSION = '3'
 
 CLAUDE_TIMEOUT = 900
 
@@ -81,12 +88,28 @@ PHPSTAN_NOISE_IDENTIFIERS = {
 
 SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info']
 
+# The same four finding types MDL Shield labels its findings with. Its public grade counts
+# all of them, not just security — in a sample of 18 public reviews (Oct 2026) only 5 of the
+# 44 low findings were security ones — so the grade here counts all of them too.
+FINDING_TYPES = ['security', 'code_quality', 'compliance', 'best_practice']
+FINDING_TYPE_LABELS = {
+    'security': 'segurança',
+    'code_quality': 'qualidade de código',
+    'compliance': 'conformidade',
+    'best_practice': 'boa prática',
+}
+
 # Directories that never carry security signal worth a deep read. Their presence is still
 # recorded in the inventory (test count is evidence of rigour), they are just not scanned.
-SKIP_DIRS = {'amd/build', 'node_modules', 'vendor', '.git', 'docs'}
+SKIP_DIRS = {'amd/build', 'node_modules', 'vendor', '.git', 'docs', '.plans'}
 METADATA_ONLY_DIRS = {'tests', 'lang'}
 
 SCAN_EXTENSIONS = {'.php', '.js', '.mustache', '.xml', '.css'}
+# Scanned only where MDL Shield has been seen to find something in them: a README stating
+# requirements that contradict version.php, a CI workflow with its checks switched off.
+ROOT_DOC_EXTENSIONS = {'.md'}
+WORKFLOW_DIR = '.github/workflows'
+WORKFLOW_EXTENSIONS = {'.yml', '.yaml'}
 
 
 # --------------------------------------------------------------------------- #
@@ -112,10 +135,15 @@ def collect_files(plugin_dir):
     """Every candidate file, classified into scan tiers."""
     scan, metadata_only = [], []
     for path in sorted(plugin_dir.rglob('*')):
-        if not path.is_file() or path.suffix not in SCAN_EXTENSIONS:
+        if not path.is_file():
             continue
         rel = str(path.relative_to(plugin_dir))
-        if _is_skipped(rel):
+        wanted = (
+            path.suffix in SCAN_EXTENSIONS
+            or (path.suffix in ROOT_DOC_EXTENSIONS and '/' not in rel)
+            or (path.suffix in WORKFLOW_EXTENSIONS and rel.startswith(WORKFLOW_DIR + '/'))
+        )
+        if not wanted or _is_skipped(rel):
             continue
         try:
             lines = len(path.read_text(encoding='utf-8', errors='replace').splitlines())
@@ -358,38 +386,44 @@ def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, 
 #  Phase C — AI semantic scan                                                  #
 # --------------------------------------------------------------------------- #
 
-SCAN_PROMPT = """Você é um auditor de segurança de plugins Moodle. Analise os arquivos listados
-abaixo procurando VULNERABILIDADES DE SEGURANÇA, seguindo o catálogo de regras do seu prompt
-de sistema.
+SCAN_PROMPT = """Você é um revisor de plugins Moodle. Analise os arquivos listados abaixo
+procurando achados dos QUATRO tipos do catálogo do seu prompt de sistema: vulnerabilidades de
+segurança (Camadas 1-3) e defeitos de qualidade, conformidade e boa prática (Camada 4).
+
+Segurança vem primeiro: um XSS ou um acesso indevido pesa mais que qualquer achado de
+qualidade. Mas não pare aí — a nota pública do MDL Shield, que esta auditoria imita, conta os
+quatro tipos, e um único "low" de qualidade já tira o A+.
 
 Leia cada arquivo por completo com a ferramenta Read. Você PODE e DEVE ler outros arquivos do
-plugin (Grep/Glob/Read) quando precisar confirmar se algo é realmente explorável — seguir a
-cadeia de chamada é o que separa achado real de suposição.
+plugin (Grep/Glob/Read) quando precisar confirmar um achado — seguir a cadeia de chamada é o
+que separa achado real de suposição. Para confirmar como o core se comporta (o que uma API
+exige, se uma função existe na versão mínima do plugin), leia o código do core do Moodle.
 
-Seja conservador: só reporte o que tiver certeza. Nada de estilo, PHPDoc ou i18n.
+Procure ativamente, além das regras de segurança:
+- o mesmo dado sensível exposto por dois caminhos com decisões de acesso diferentes
+  (L2-AUTHZ-1);
+- estados que a escrita deixa criar e a leitura rejeita para sempre (L4-ROB-2);
+- formulários sem validation() para limites que, violados, quebram a atividade (L4-ROB-1);
+- APIs do core contornadas (L4-API-*), Privacy Provider declarando menos do que o plugin
+  grava (L4-PRIV-1), texto fixo visível ao usuário (L4-HYG-1).
 
-Enquanto lê, também sinalize antipadrão N+1 ($DB->get_record/get_records/get_field dentro de
-foreach/for/while) — mas classifique com cuidado, seguindo a regra L3-DOS-N1 do catálogo:
-- Na IMENSA maioria dos casos é "finding_type": "code_quality" — não é achado de segurança,
-  vai para a seção de performance do relatório e NÃO afeta a nota.
-- Vira "finding_type": "security", "category": "dos" (achado de verdade, com severidade)
-  APENAS quando o número de iterações do loop é controlado por entrada não confiável e sem
-  limite superior (ex.: lista enviada pelo usuário, resultado de uma busca sem paginação) —
-  ou seja, quando um atacante consegue fazer o custo escalar por conta própria, não só
-  quando o código é ineficiente.
+Seja conservador: só reporte o que tiver certeza. Nada de formatação de código nem PHPDoc.
+Para achados que não são de segurança, aplique a régua low/info do catálogo à risca: "low"
+exige cenário concreto de falha, contorno de API do core ou descumprimento da Privacy API;
+o resto é "info". Severidade "medium" ou acima é só para "security".
 
 Responda APENAS com um array JSON (vazio se nada encontrado):
 [{
   "title": "título curto",
-  "finding_type": "security ou code_quality — code_quality só para N+1 não-escalável",
+  "finding_type": "security | code_quality | compliance | best_practice",
   "severity": "critical|high|medium|low|info",
-  "category": "uma das 15 categorias oficiais do catálogo, ou \"n_plus_one\" quando finding_type=code_quality",
-  "rule_id": "id da regra do catálogo, ex. L2-XSS-1 ou L3-DOS-N1",
+  "category": "security: uma das 15 categorias oficiais; demais tipos: vocabulário da Camada 4",
+  "rule_id": "id da regra do catálogo, ex. L2-XSS-1, L4-ROB-2",
   "file": "caminho/relativo.php",
   "line": 123,
   "extra_locations": [{"file": "outro.mustache", "line": 95}],
   "description": "o que está errado e por quê",
-  "exploitable_by": "quem consegue explorar (não autenticado / estudante / professor / admin)",
+  "exploitable_by": "security: quem consegue explorar; demais tipos: em que situação o defeito aparece",
   "impact": "blast radius concreto",
   "mitigations": "proteções que JÁ existem e limitam o impacto (string vazia se nenhuma)",
   "recommendation": "correção específica"
@@ -464,13 +498,70 @@ não sobrevive a uma leitura cuidadosa.
 Lembre que em Moodle professor e admin são papéis CONFIÁVEIS por design. Falha que só um
 professor dispara é no máximo "low", a não ser que atinja dados fora do curso dele.
 
+Se o defeito é real mas NÃO é de segurança (ninguém ganha acesso, dado ou poder indevido —
+o pior desfecho é a funcionalidade quebrar ou ficar frágil), confirme reclassificando:
+"finding_type" com um dos tipos não-segurança do catálogo e "category" do vocabulário da
+Camada 4, e severidade pela régua low/info dele.
+
 Responda APENAS com JSON:
 {"verdict": "confirmed|refuted", "severity": "critical|high|medium|low|info",
+ "finding_type": "security | code_quality | compliance | best_practice",
+ "category": "categoria final",
  "reason": "por que confirma ou refuta, citando o código",
- "poc": "passo a passo da exploração, se confirmado"}
+ "poc": "passo a passo da exploração, se confirmado como security"}
 
 Achado:
 """
+
+VERIFY_QUALITY_PROMPT = """Verifique se este achado de qualidade, conformidade ou boa prática
+em um plugin Moodle é REAL. Ele não é uma alegação de vulnerabilidade: a pergunta não é "dá
+para explorar?", e sim "o defeito existe e importa?".
+
+Leia o código citado, o que for necessário ao redor e, quando o achado depender de como o
+core se comporta (o que uma API exige, se uma função existe na versão mínima declarada em
+$plugin->requires), o código do core do Moodle. Seja cético: refute quando
+- o código já trata o caso em outro lugar (validação no servidor, wrapper que aplica a regra,
+  guarda em outra camada);
+- o padrão é o recomendado pelo próprio core ou pelo template oficial, ou não existe API do
+  core para fazer aquilo;
+- o "defeito" depende de uma situação que o plugin não deixa acontecer.
+
+Se confirmar, decida a severidade pela régua do catálogo — é ela que separa A de A+:
+- "low": cenário concreto de falha (entrada ou configuração real → resultado errado,
+  funcionalidade quebrada, dado perdido ou incoerente), contorno de API do core que existe
+  para aquilo, ou descumprimento da Privacy API;
+- "info": higiene sem cenário de falha (código morto, fragilidade hipotética a mudança futura,
+  ausência de testes).
+Nunca acima de "low". Se durante a leitura você perceber que o defeito é na verdade de
+segurança (alguém ganha acesso, dado ou poder indevido), confirme com "finding_type":
+"security", uma das 15 categorias oficiais e a severidade de segurança correspondente.
+
+Responda APENAS com JSON:
+{"verdict": "confirmed|refuted", "severity": "low|info (ou severidade de segurança)",
+ "finding_type": "code_quality | compliance | best_practice | security",
+ "category": "categoria final",
+ "reason": "por que confirma ou refuta, citando o código",
+ "poc": "cenário concreto: passos, entrada ou configuração → resultado errado"}
+
+Achado:
+"""
+
+
+def normalize_finding(finding):
+    """Coerce the type/severity pair into the combinations the grade understands.
+
+    Anything without a known finding_type is treated as security (every finding was security
+    before the four types existed, so older JSON reports stay meaningful), and a non-security
+    finding is capped at low — the catalog reserves medium and above for security.
+    """
+    if finding.get('finding_type') not in FINDING_TYPES:
+        finding['finding_type'] = 'security'
+    if finding.get('severity') not in SEVERITY_ORDER:
+        finding['severity'] = 'info'
+    if finding['finding_type'] != 'security' and finding['severity'] in ('critical', 'high',
+                                                                         'medium'):
+        finding['severity'] = 'low'
+    return finding
 
 
 def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
@@ -480,12 +571,27 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
     Deliberately one call per candidate rather than batched: the sceptical, focused reading
     is what produces the conservative tone, and bundling several findings into one prompt
     dilutes it. The cost is bounded by caching instead.
+
+    Security candidates get the exploitability question; the other three types get a prompt
+    about whether the defect is real and where it falls on the low/info line, since asking
+    "can this be exploited?" about a missing form validation refutes everything. Either
+    verifier may move a finding to another type. Static-check facts marked `deterministic`
+    are taken as confirmed without a call.
     """
     def run_one(finding):
+        if finding.get('deterministic'):
+            finding['verdict'] = 'confirmed'
+            finding['verify_reason'] = 'fato determinístico, sem verificação por IA'
+            finding.setdefault('poc', '')
+            return normalize_finding(finding)
+
+        prompt = (VERIFY_PROMPT if finding.get('finding_type', 'security') == 'security'
+                  else VERIFY_QUALITY_PROMPT)
+
         def compute():
             payload = json.dumps(finding, ensure_ascii=False, indent=2)
             try:
-                text = call_claude(VERIFY_PROMPT + payload, plugin_dir, model,
+                text = call_claude(prompt + payload, plugin_dir, model,
                                    fallback, rules)
                 result = extract_json(text)
                 # extract_json() is shared with the phase C scan, which expects a JSON
@@ -502,8 +608,8 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
 
         # A failed verification is not cached: the next run should retry it, not inherit
         # a refusal caused by a spend limit or a network blip.
-        key = hash_key(PROMPT_VERSION, finding.get('title'), finding.get('file'),
-                       finding.get('line'), finding.get('description'))
+        key = hash_key(PROMPT_VERSION, finding.get('finding_type'), finding.get('title'),
+                       finding.get('file'), finding.get('line'), finding.get('description'))
         path = cache_path(CACHE_DIR, franken, 'verify', key)
         result = None
         if use_cache and path.is_file():
@@ -524,9 +630,13 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
         finding['verdict'] = result.get('verdict', 'refuted')
         finding['verify_reason'] = result.get('reason', '')
         finding['poc'] = result.get('poc', '')
+        if result.get('finding_type') in FINDING_TYPES:
+            finding['finding_type'] = result['finding_type']
+        if result.get('category'):
+            finding['category'] = result['category']
         if result.get('severity') in SEVERITY_ORDER:
             finding['severity'] = result['severity']
-        return finding
+        return normalize_finding(finding)
 
     def detail(finding):
         title = (finding.get('title') or '')[:40]
@@ -539,10 +649,11 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
 #  Phase E — dedup                                                             #
 # --------------------------------------------------------------------------- #
 
-DEDUP_PROMPT = """Você recebe uma lista de achados de segurança de uma auditoria de plugin
-Moodle. Cada achado veio de um lote de varredura independente (Fase C) e foi verificado
+DEDUP_PROMPT = """Você recebe uma lista de achados (de segurança, qualidade, conformidade e boa
+prática) de uma auditoria de plugin Moodle. Cada achado veio de um lote de varredura
+independente (Fase C), de uma checagem determinística ou do PHPStan, e foi verificado
 isoladamente (Fase D) — nenhum lote ou verificação teve visibilidade dos demais achados.
-Por isso, a MESMA vulnerabilidade pode ter sido relatada mais de uma vez: uma vez por cada
+Por isso, o MESMO problema pode ter sido relatado mais de uma vez: uma vez por cada
 arquivo que participa do mesmo fluxo (ex.: a rota de leitura e a rota de escrita do mesmo
 bug de autorização), ou duas vezes dentro do mesmo arquivo quando duas partes dele exibem o
 mesmo sintoma (ex.: uma função que declara metadata incompleta e outra que exporta os dados
@@ -550,7 +661,7 @@ de acordo com essa mesma metadata incompleta).
 
 Agrupe os achados que descrevem a MESMA causa raiz — ou seja, corrigir um automaticamente
 resolve o outro. NÃO agrupe achados que só compartilham categoria, arquivo ou severidade por
-coincidência; eles precisam ser genuinamente a mesma vulnerabilidade.
+coincidência; eles precisam ser genuinamente o mesmo problema.
 
 Para cada grupo de 2+ achados duplicados, escolha "primary": o índice do achado com a
 descrição, prova de conceito e correção recomendada mais completas e específicas — é esse
@@ -583,6 +694,7 @@ def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_c
             'title': f.get('title'),
             'file': f.get('file'),
             'line': f.get('line'),
+            'finding_type': f.get('finding_type'),
             'category': f.get('category'),
             'severity': f.get('severity'),
             # Trimmed: the model only needs enough to judge "same root cause", not the
@@ -643,6 +755,12 @@ def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_c
             key=lambda s: SEVERITY_ORDER.index(s) if s in SEVERITY_ORDER else len(SEVERITY_ORDER),
         )
 
+        # Same rule for the type: if any reading saw a security impact, the merged finding
+        # is a security one.
+        if any(findings[i].get('finding_type') == 'security' for i in others):
+            survivor['finding_type'] = 'security'
+        normalize_finding(survivor)
+
         reason = (group.get('reason') or '').strip()
         if reason:
             survivor['dedup_note'] = reason
@@ -659,7 +777,8 @@ def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_c
 # --------------------------------------------------------------------------- #
 
 LANG_BY_SUFFIX = {'.php': 'php', '.js': 'javascript', '.mustache': 'html',
-                  '.css': 'css', '.xml': 'xml'}
+                  '.css': 'css', '.xml': 'xml', '.md': 'markdown', '.yml': 'yaml',
+                  '.yaml': 'yaml'}
 
 
 def extract_snippet(plugin_dir, rel, line, context=3):
@@ -741,36 +860,28 @@ def severity_counts(findings):
 def compute_grade(findings):
     """Grade dominated by the worst finding, not by a sum of penalties.
 
-    An additive score misrepresents a security report: eight low-severity hygiene gaps are
-    not "worse" than one stored XSS, yet any penalty-sum model says exactly that. So the
-    worst severity present sets a ceiling, and only the count of low findings refines it.
+    An additive score misrepresents a review: eight low-severity hygiene gaps are not
+    "worse" than one stored XSS, yet any penalty-sum model says exactly that. So the worst
+    severity present sets a ceiling, and only the count of low findings refines it.
 
-    Calibrated (2026-09-04) against 14 real MDL Shield data points: 10 public reviews
-    (mdlshield.com/reviews, Jun-Sep 2026) plus 4 of the author's own dashboard reviews of
-    block_playerhud/filter_playerhud (Apr-Aug 2026, some unpublished). This is the closest
-    deterministic fit to that sample, not a guarantee of an identical grade — MDL Shield's
-    own grading is demonstrably NOT a pure function of severity-label counts: two reviews
-    with an identical "5 low, 0 medium/high/critical" tuple graded A and B+ respectively
-    (tiny_fontcolor vs local_differentiator), and one review with 1 high + 3 medium graded
-    C while a different review with just 1 high + 1 medium graded D (block_playerhud
-    2026-04-29 vs filter_playerhud 2026-08-02) — i.e. MDL Shield weighs each finding's real
-    exploitability, not just the severity label attached to it. Expect occasional
-    disagreement at the boundaries (notably: any single medium, and low counts around 5-6)
-    as an inherent limit of a label-only formula, not a bug in this function.
+    Every finding type counts, the way MDL Shield's public grade does. Re-calibrated
+    (2026-10-02) on 18 public reviews (mdlshield.com/reviews, Sep-Oct 2026) that label each
+    finding with its type: 44 lows, of which 26 code quality, 7 best practice, 5 compliance
+    and only 5 security. The rule they show:
+      - any low, of any type, caps the grade at A: tool_aiagent has a single finding (a low
+        code-quality unserialize()) and got A;
+      - info does not: mod_profilefield (0 low + 1 info best practice) is the only A+ in the
+        sample;
+      - one security medium gives B+ (availability_xpstore: 1 medium + 3 low);
+      - 1 to 5 lows stayed A in every one of the 17 A reviews.
 
-    Reference points used:
-      filter_playerhud       1 low + 1 info                    -> A   (public, 2026-09-03)
-      tool_userautodelete/tiny_cloze/local_quicknote  4 low     -> A   (public)
-      tiny_fontcolor, local_listcoursefiles           5 low     -> A   (public)
-      local_differentiator                            5 low     -> B+  (public — same count as above, different grade)
-      quizaccess_campla, local_information_center     8 low     -> B+  (public)
-      block_openbook                    1 medium + 3 low        -> B+  (public)
-      local_oc_seasonal_animations      1 medium + 5 low         -> B  (public, but explicitly
-        stated as held down by a non-security functional bug stacked on top, not by the
-        medium alone)
-      filter_playerhud (2026-08-02)     1 high + 1 medium + 1 low + 1 info -> D (dashboard)
-      block_playerhud  (2026-04-29)     1 high + 3 medium + 4 low + 1 info -> C (dashboard)
-      block_playerhud  (2026-04-30)     2 medium + 4 low + 2 info          -> C (dashboard)
+    Earlier data points (2026-09-04 calibration, kept because they cover the rest of the
+    scale): 5 low graded A (tiny_fontcolor) and B+ (local_differentiator); 8 low -> B+
+    (quizaccess_campla, local_information_center); 1 high + 1 medium + 1 low + 1 info -> D
+    (filter_playerhud 2026-08-02); 1 high + 3 medium + 4 low -> C (block_playerhud
+    2026-04-29). MDL Shield's grade is not a pure function of the counts — those two pairs
+    prove it weighs each finding's real impact — so expect occasional disagreement at the
+    boundaries (a single medium, 5-6 lows) as an inherent limit of a label-only formula.
     """
     counts = severity_counts(findings)
     if counts['critical']:
@@ -783,20 +894,74 @@ def compute_grade(findings):
         return 'B+', f'{counts["low"]} achados de severidade baixa'
     if counts['low']:
         return 'A', f'{counts["low"]} achado(s) de severidade baixa'
-    return 'A+', 'nenhum achado de segurança'
+    if counts['info']:
+        return 'A+', 'só achados informativos, que não tiram o A+'
+    return 'A+', 'nenhum achado'
+
+
+def type_counts(findings):
+    """{finding_type: {severity: count}} for the report's type-by-severity table."""
+    table = {t: {s: 0 for s in SEVERITY_ORDER} for t in FINDING_TYPES}
+    for finding in findings:
+        ftype = finding.get('finding_type', 'security')
+        severity = finding.get('severity', 'info')
+        if ftype in table and severity in table[ftype]:
+            table[ftype][severity] += 1
+    return table
+
+
+def phpstan_candidates(triaged):
+    """PHPStan messages the triage judged real, as candidates for Phase D.
+
+    MDL Shield reports a real bug (a setting read that does not exist, an always-false
+    comparison) as a code-quality finding that counts against the grade, so a triaged real
+    bug can no longer live only in a side table. Each one goes through the same verification
+    as the AI scan's candidates; the table in the report stays as the raw triage record.
+    """
+    candidates = []
+    for msg in triaged:
+        verdict = msg.get('verdict')
+        if verdict not in ('real_bug', 'security_relevant'):
+            continue
+        security = verdict == 'security_relevant'
+        candidates.append({
+            'title': f'PHPStan: {msg.get("message", "")[:90]}',
+            'finding_type': 'security' if security else 'code_quality',
+            'severity': 'low',
+            'category': 'insecure_config_management' if security else 'robustness',
+            'rule_id': f'PHPStan {msg.get("identifier") or ""}'.strip(),
+            'file': msg.get('file'),
+            'line': msg.get('line'),
+            'extra_locations': [],
+            'description': f'{msg.get("message", "")}\n\nTriagem: {msg.get("reason", "")}',
+            'exploitable_by': '',
+            'impact': '',
+            'mitigations': '',
+            'recommendation': '',
+            'source': 'phpstan',
+        })
+    return candidates
 
 
 def _render_finding(add, index, finding):
     """One finding, in the order a reader needs it: what, where, why, proof, fix."""
     severity = finding.get('severity', 'info')
+    ftype = finding.get('finding_type', 'security')
     add(f'### {index}. {finding.get("title", "(sem título)")}')
     add('')
-    add(f'| | |')
+    add('| | |')
     add('|---|---|')
     add(f'| **Severidade** | `{severity}` |')
+    add(f'| **Tipo** | {FINDING_TYPE_LABELS.get(ftype, ftype)} |')
     add(f'| **Categoria** | `{finding.get("category", "?")}` |')
     add(f'| **Regra** | `{finding.get("rule_id", "?")}` |')
-    add(f'| **Explorável por** | {finding.get("exploitable_by", "?")} |')
+    if finding.get('exploitable_by'):
+        label = 'Explorável por' if ftype == 'security' else 'Quando aparece'
+        add(f'| **{label}** | {finding["exploitable_by"]} |')
+    source = {'static': 'checagem determinística', 'phpstan': 'PHPStan'}.get(
+        finding.get('source'))
+    if source:
+        add(f'| **Origem** | {source} |')
     add('')
 
     add('**Local afetado**')
@@ -846,7 +1011,7 @@ def _render_finding(add, index, finding):
         add(finding['mitigations'])
         add('')
     if finding.get('poc'):
-        add('**Prova de conceito**')
+        add('**Prova de conceito**' if ftype == 'security' else '**Cenário de falha**')
         add('')
         add(finding['poc'])
         add('')
@@ -858,7 +1023,7 @@ def _render_finding(add, index, finding):
 
 
 def render_report(ctx):
-    """Assemble the Markdown report, ordered the way a security review is normally read."""
+    """Assemble the Markdown report, ordered the way a code review is normally read."""
     inv, confirmed, refuted = ctx['inventory'], ctx['confirmed'], ctx['refuted']
     narrative = ctx.get('narrative') or {}
     counts = severity_counts(confirmed)
@@ -868,7 +1033,7 @@ def render_report(ctx):
     out = []
     add = out.append
 
-    add(f'# Relatório de auditoria de segurança — {ctx["franken"]}')
+    add(f'# Relatório de auditoria — {ctx["franken"]}')
     add('')
     if narrative.get('purpose'):
         add(f'*{narrative["purpose"]}*')
@@ -882,21 +1047,26 @@ def render_report(ctx):
     if grade_reason:
         add(f'*{grade_reason}*')
         add('')
-    add('| Severidade | Achados |')
-    add('|---|---|')
-    for sev in SEVERITY_ORDER:
-        mark = f'**{counts[sev]}**' if counts[sev] else '0'
-        add(f'| {sev} | {mark} |')
+    if ctx.get('security_grade'):
+        add(f'Nota contando só os achados de segurança: **{ctx["security_grade"]}**')
+        add('')
+    table = type_counts(confirmed)
+    add('| Tipo | ' + ' | '.join(SEVERITY_ORDER) + ' |')
+    add('|---|' + '---|' * len(SEVERITY_ORDER))
+    for ftype in FINDING_TYPES:
+        cells = [f'**{table[ftype][sev]}**' if table[ftype][sev] else '0'
+                 for sev in SEVERITY_ORDER]
+        add(f'| {FINDING_TYPE_LABELS[ftype]} | ' + ' | '.join(cells) + ' |')
+    totals = [f'**{counts[sev]}**' if counts[sev] else '0' for sev in SEVERITY_ORDER]
+    add('| **total** | ' + ' | '.join(totals) + ' |')
     add('')
     add('> A nota é **dominada pelo pior achado**, não por soma de penalidades: um `critical`'
         ' resulta em `F`, um `high` em `D`, um `medium` em `B+`; só de `low` a nota é `A`'
-        ' (até 5) ou `B+` (6 ou mais); sem achados, `A+`. Oito falhas de higiene não são'
-        ' piores que um XSS armazenado, e um modelo aditivo diria que são. Só achados de'
-        ' segurança contam — bugs de código ficam em seção própria. Calibrado sobre uma'
-        ' amostra real de notas do MDL Shield — aproximação mais próxima possível, não'
-        ' garantia de nota idêntica: o próprio MDL Shield já deu notas diferentes para a'
-        ' mesma contagem de achados (a nota real pesa a explorabilidade de cada achado, não'
-        ' só o rótulo de severidade).')
+        ' (até 5) ou `B+` (6 ou mais); sem `low`, `A+` — achados `info` não tiram o A+.'
+        ' **Os quatro tipos contam**, como na nota pública do MDL Shield: um único `low` de'
+        ' qualidade de código já limita a nota a `A`. Calibrado sobre 18 revisões públicas do'
+        ' MDL Shield — aproximação mais próxima possível, não garantia de nota idêntica: o'
+        ' próprio MDL Shield já deu notas diferentes para a mesma contagem de achados.')
     add('')
 
     # ---- Sumário executivo ------------------------------------------------
@@ -964,20 +1134,21 @@ def render_report(ctx):
     add('## Achados')
     add('')
     if not confirmed:
-        add('Nenhum achado de segurança confirmado.')
+        add('Nenhum achado confirmado.')
         add('')
     else:
-        ordered = sorted(confirmed,
-                         key=lambda f: SEVERITY_ORDER.index(f.get('severity', 'info')))
+        ordered = sorted(confirmed, key=lambda f: (
+            SEVERITY_ORDER.index(f.get('severity', 'info')),
+            FINDING_TYPES.index(f.get('finding_type', 'security'))))
         for index, finding in enumerate(ordered, 1):
             _render_finding(add, index, finding)
 
     # ---- Pontos fortes ----------------------------------------------------
     strengths = [s for s in (narrative.get('strengths') or []) if isinstance(s, dict)]
     if strengths:
-        add('## Pontos fortes de segurança')
+        add('## Pontos fortes')
         add('')
-        add('Práticas defensivas verificadas no código durante a auditoria.')
+        add('Práticas verificadas no código durante a auditoria.')
         add('')
         for index, item in enumerate(strengths, 1):
             add(f'{index}. **{item.get("title", "")}** — {item.get("detail", "")}')
@@ -988,9 +1159,10 @@ def render_report(ctx):
                  if m.get('verdict') in ('real_bug', 'security_relevant')]
     add('## Bugs de código (PHPStan triado)')
     add('')
-    add('Seção separada de propósito: **não afetam a nota de segurança**. São achados'
-        ' determinísticos do PHPStan que sobreviveram à triagem por IA — o ruído de idioma'
-        ' Moodle foi descartado.')
+    add('Registro bruto da triagem: mensagens do PHPStan que a IA julgou bug real. Cada uma'
+        ' também passou pela verificação da Fase D; as confirmadas aparecem em **Achados**,'
+        ' com origem "PHPStan", e contam para a nota como qualidade de código. O ruído de'
+        ' idioma Moodle foi descartado.')
     add('')
     if not real_bugs:
         add('Nenhum bug real após triagem.')
@@ -1011,12 +1183,11 @@ def render_report(ctx):
     # ---- Achados de performance ---------------------------------------------
     quality_findings = ctx.get('quality_findings') or []
     if quality_findings:
-        add('## Achados de performance')
+        add('## Achados de performance (formato antigo)')
         add('')
-        add('Seção separada de propósito: **não afetam a nota de segurança**. Vêm direto da'
-            ' varredura semântica (Fase C), sem passar pelo passe de verificação da Fase D'
-            ' — esse passe é sobre exploitabilidade, que não se aplica a uma observação de'
-            ' performance. Trate como sinal a conferir, não como confirmado.')
+        add('Relatório gerado antes dos quatro tipos de achado: estas observações de N+1 não'
+            ' passaram pela verificação nem entram na nota. Numa auditoria nova, viram achados'
+            ' de boa prática verificados.')
         add('')
         for index, finding in enumerate(quality_findings, 1):
             _render_finding(add, index, finding)
@@ -1042,23 +1213,26 @@ def render_report(ctx):
 
     add('---')
     add('')
-    add('Gerado por `moodle-security-audit` — ferramentas determinísticas (PHPStan) +'
-        ' revisão por IA, com passe de verificação. Catálogo de regras em'
-        ' `security-rules.md`.')
+    add('Gerado por `moodle-security-audit` — ferramentas determinísticas (PHPStan e'
+        ' checagens de padrão) + revisão por IA, com passe de verificação. Catálogo de regras'
+        ' em `security-rules.md`.')
     add('')
     return '\n'.join(out)
 
 
-NARRATIVE_PROMPT = """Escreva as seções narrativas do relatório de uma auditoria de segurança de
-plugin Moodle. Você pode ler o código para embasar o que afirmar — não invente nada.
+NARRATIVE_PROMPT = """Escreva as seções narrativas do relatório de uma auditoria de plugin Moodle
+que cobre segurança, qualidade de código, conformidade (Privacy API) e boas práticas. Você
+pode ler o código para embasar o que afirmar — não invente nada.
 
 Tudo em português do Brasil. Factual, sem elogio vazio e sem marketing.
 
 Responda APENAS com JSON:
 {
   "purpose": "1-2 frases dizendo o que o plugin faz (contexto para quem lê o relatório)",
-  "executive_summary": "3-5 frases: postura geral de segurança, o que os achados significam \
-na prática e o que NÃO foi encontrado. Se não houver achado grave, diga com clareza.",
+  "executive_summary": "3-5 frases: postura geral de segurança, o que os achados de cada tipo \
+significam na prática e o que NÃO foi encontrado. Se não houver achado grave, diga com \
+clareza. Se a nota geral for menor que a nota só de segurança, explique que a diferença vem \
+de achados de qualidade, conformidade ou boa prática.",
   "methodology": "2-3 frases descrevendo concretamente o que foi examinado — cite os \
 diretórios e tipos de arquivo reais deste plugin (entry points, classes/external/, \
 templates, AMD...).",
@@ -1082,9 +1256,11 @@ def generate_narrative(ctx, plugin_dir, model, fallback, rules):
     payload = json.dumps({
         'component': ctx['franken'],
         'inventory': ctx['inventory'],
-        'findings': [{k: f.get(k) for k in ('title', 'severity', 'category', 'file')}
+        'findings': [{k: f.get(k) for k in ('title', 'finding_type', 'severity', 'category',
+                                            'file')}
                      for f in ctx['confirmed']],
         'grade': ctx['grade'],
+        'security_grade': ctx.get('security_grade'),
     }, ensure_ascii=False, indent=2)
     try:
         text = call_claude(NARRATIVE_PROMPT + payload, plugin_dir, model, fallback,
@@ -1155,10 +1331,15 @@ def main():
             return 1
         ctx = json.loads(source.read_text(encoding='utf-8'))
         # Snippets are re-extracted from disk so the report always matches the current file.
-        ctx['confirmed'] = attach_snippets(ctx.get('confirmed', []), plugin_dir)
-        # .get(..., []): older JSON files predate the quality_findings split and simply
-        # don't have the key — treat that as "none", not an error.
+        ctx['confirmed'] = attach_snippets(
+            [normalize_finding(f) for f in ctx.get('confirmed', [])], plugin_dir)
+        # JSON from before the four finding types kept N+1 observations apart, unverified
+        # and outside the grade; they are still rendered in their own section, and the grade
+        # is recomputed so an old JSON re-rendered today follows today's grading rule.
         ctx['quality_findings'] = attach_snippets(ctx.get('quality_findings', []), plugin_dir)
+        ctx['grade'], ctx['grade_reason'] = compute_grade(ctx['confirmed'])
+        ctx['security_grade'], _ = compute_grade(
+            [f for f in ctx['confirmed'] if f.get('finding_type') == 'security'])
         if not ctx.get('narrative'):
             print('narrativa ausente no JSON — gerando (1 chamada)...')
             ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
@@ -1198,6 +1379,8 @@ def main():
         if phpstan_err:
             print(f'  aviso: {phpstan_err}', file=sys.stderr)
         clock.done(f'{len(phpstan_msgs)} mensagem(ns) após filtro de ruído')
+    static_candidates = run_static_checks(plugin_dir, scan_files, version)
+    print(f'  {len(static_candidates)} candidato(s) das checagens determinísticas')
     libs = check_thirdparty_libs(plugin_dir)
     if libs:
         print(f'  {len(libs)} biblioteca(s) de terceiro empacotada(s)')
@@ -1222,13 +1405,16 @@ def main():
     all_candidates = scan_batches(batches, plugin_dir, franken, args.model,
                                   args.fallback_model, rules, args.jobs, use_cache,
                                   clock=clock)
-    # code_quality candidates (N+1 that doesn't scale with attacker input) skip Phase D
-    # entirely: verify_findings()'s VERIFY_PROMPT is framed around exploitability, which
-    # doesn't apply to a performance observation, and it would be quota spent asking an
-    # adversarial-exploit question about something that was never a security claim.
-    candidates = [f for f in all_candidates if f.get('finding_type') != 'code_quality']
-    quality_findings = [f for f in all_candidates if f.get('finding_type') == 'code_quality']
-    clock.done(f'{len(candidates)} candidato(s) de segurança, {len(quality_findings)} de performance')
+    scan_count = len(all_candidates)
+    # Every source feeds the same verification: the AI scan, the static checks (Phase A)
+    # and the PHPStan messages the triage judged real (Phase B).
+    candidates = [normalize_finding(dict(f, source=f.get('source', 'scan')))
+                  for f in all_candidates if isinstance(f, dict)]
+    candidates += [normalize_finding(f) for f in static_candidates]
+    candidates += [normalize_finding(f) for f in phpstan_candidates(triaged)]
+    by_type = {t: sum(1 for f in candidates if f['finding_type'] == t) for t in FINDING_TYPES}
+    clock.done(f'{scan_count} da varredura, {len(candidates)} no total — '
+               + ', '.join(f'{n} {FINDING_TYPE_LABELS[t]}' for t, n in by_type.items() if n))
 
     # Phase D
     if candidates and not args.no_verify:
@@ -1252,13 +1438,14 @@ def main():
 
     # Phase F
     confirmed = attach_snippets(confirmed, plugin_dir)
-    quality_findings = attach_snippets(quality_findings, plugin_dir)
     grade, grade_reason = compute_grade(confirmed)
+    security_grade, _ = compute_grade(
+        [f for f in confirmed if f.get('finding_type') == 'security'])
     ctx = {
         'franken': franken, 'version': version, 'inventory': inventory,
         'confirmed': confirmed, 'refuted': refuted, 'phpstan': triaged,
-        'quality_findings': quality_findings,
         'libs': libs, 'grade': grade, 'grade_reason': grade_reason,
+        'security_grade': security_grade,
     }
     clock.phase('F', 'Gerando relatório')
     ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
@@ -1279,7 +1466,7 @@ def main():
 
     counts = severity_counts(confirmed)
     print('')
-    print(f'Grade: {grade} — {grade_reason}')
+    print(f'Grade: {grade} — {grade_reason}  (só segurança: {security_grade})')
     print('  ' + ' · '.join(f'{s}: {counts[s]}' for s in SEVERITY_ORDER))
     print('')
     print(f'Relatório: {report_path}')

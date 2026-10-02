@@ -10,7 +10,7 @@ Ferramentas de automação para desenvolvimento de plugins Moodle:
 6. **Validação de schema** — `moodle-check-schema`, detecta drift entre o banco de dev e os `install.xml`
 7. **Upgrade + validação** — `moodle-upgrade`, aplica upgrades nos containers configurados e valida o schema no fim
 8. **Análise estática** — `moodle-phpstan`, PHPStan com a extensão Moodle (pega bugs de tipo/API)
-9. **Auditoria de segurança** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade
+9. **Auditoria de segurança e qualidade** — `moodle-security-audit`, lê o plugin inteiro (determinístico + IA) e emite relatório com grade nos mesmos quatro tipos de achado do MDL Shield; `moodle-security-audit-calibrate` mede a distância até o MDL Shield em revisões públicas
 10. **Monitor de novos plugins** — aviso diário via Telegram quando plugins são publicados no diretório oficial
 11. **Monitor de updates de core** — `core-updates-watch.py`, aviso diário via Telegram quando um dos três containers locais tem atualização de core Moodle disponível
 12. **Badge de downloads + resumo mensal** — `moodle-marketplace-downloads` gera o `docs/badges/downloads.json` a partir da página de stats do Marketplace; o companion privado atualiza todas as badges e manda um resumo mensal (instalações + downloads) no Telegram
@@ -469,7 +469,8 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 ├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos containers configurados + check de schema)
 ├── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
 ├── moodle-scope-audit      ← symlink → scope-audit.sh (§6 do SCOPE.md vs disco)
-└── moodle-security-audit   ← symlink → security-audit.sh (auditoria de segurança determinística + IA)
+├── moodle-security-audit   ← symlink → security-audit.sh (auditoria de segurança e qualidade, determinística + IA)
+└── moodle-security-audit-calibrate ← symlink → security-audit-calibrate.sh (compara a auditoria com revisões públicas do MDL Shield)
 
 ~/.moodle-dev-tools/
 ├── phpcs-ai-call.py        ← caller Python (Gemini + OpenAI-compatible)
@@ -637,8 +638,15 @@ corretamente vazios/ausentes até a primeira tag).
 
 ## Auditoria de segurança — `moodle-security-audit`
 
-Lê o plugin **inteiro** procurando vulnerabilidades e emite um relatório com grade, achados
-por severidade e correção recomendada. Complementa o pre-commit, que revisa **diffs**.
+Lê o plugin **inteiro** procurando vulnerabilidades e defeitos de qualidade, conformidade e
+boa prática, e emite um relatório com grade, achados por tipo e severidade e correção
+recomendada. Complementa o pre-commit, que revisa **diffs**.
+
+O objetivo declarado é ficar o mais perto possível do [MDL Shield](https://mdlshield.com), cuja
+nota é pública e só pode ser pedida duas vezes por mês: rodar esta auditoria antes evita
+gastar uma dessas rodadas com achados que dava para ter corrigido antes. Por isso ela usa os
+mesmos quatro tipos de achado do MDL Shield — **segurança**, **qualidade de código**,
+**conformidade** e **boa prática** — e conta os quatro na nota, como ele.
 
 A diferença não é de grau, é de natureza: um achado como "esta variável recebe
 `format_string()` e a irmã ao lado, no mesmo `if`, não recebe" é invisível para revisão de
@@ -666,10 +674,10 @@ de vulnerabilidade não pode virar arquivo versionado num repositório público.
 
 | Fase | O que faz |
 |---|---|
-| **A** | Coleta determinística: PHPStan em nível alto, versões de libs empacotadas, drift de schema |
+| **A** | Coleta determinística: PHPStan em nível alto, checagens de padrão (`audit_static_checks.py`), versões de libs empacotadas |
 | **B** | **Triagem por IA** das mensagens do PHPStan: `real_bug` / `security_relevant` / `moodle_idiom_noise` |
-| **C** | Varredura semântica por IA, em lotes, com o agente lendo o código por conta própria |
-| **D** | Verificação: cada candidato precisa ser confirmado explorável ou é descartado |
+| **C** | Varredura semântica por IA, em lotes, com o agente lendo o código por conta própria — os quatro tipos de achado |
+| **D** | Verificação de **todo** candidato (varredura, checagens de padrão e bugs reais do PHPStan): os de segurança precisam ser explorável, os demais precisam de defeito real e passam pela régua `low`/`info`; quem não sobrevive é descartado |
 | **E** | Dedup por IA: consolida achados confirmados que descrevem a mesma causa raiz — os lotes da Fase C e as verificações da Fase D rodam isolados uns dos outros, então a mesma vulnerabilidade vista por ângulos de código diferentes pode sobreviver como dois achados |
 | **F** | Grade determinística + relatório Markdown |
 
@@ -689,45 +697,70 @@ rejeitar um por um. Todo o resto vai para triagem, então o filtro permanece con
 ### Regras verificadas
 
 Catálogo em [`security-rules.md`](security-rules.md) — editar esse arquivo é como se ajusta a
-auditoria. Três camadas:
+auditoria. Quatro camadas:
 
 1. **Guia oficial do Moodle** ([policies/security](https://moodledev.io/general/development/policies/security)) — as 15 categorias
-   oficiais de vulnerabilidade são o vocabulário fechado do campo `category` de todo achado,
-   mais as regras verificáveis do "Summary of the guidelines". Quatro categorias
+   oficiais de vulnerabilidade são o vocabulário fechado do campo `category` de todo achado
+   de segurança, mais as regras verificáveis do "Summary of the guidelines". Quatro categorias
    (`brute_forcing_login`, `insecure_config_management`, `buffer_overruns`,
    `social_engineering`) são de escopo de site e só são reportadas se o plugin implementar
    aquilo por conta própria.
-2. **Regras específicas de plugin** — isolamento por `instanceid`, triple-mustache em campo
-   armazenado, cleanup em `delete_instance`/`course_deleted`, column drift de backup e
-   privacy, saída de IA como entrada não-confiável.
+2. **Regras específicas de plugin** — isolamento por `instanceid`, decisão de acesso
+   coerente entre caminhos que expõem o mesmo dado, triple-mustache em campo armazenado,
+   cleanup em `delete_instance`/`course_deleted`, column drift de backup e privacy, saída de
+   IA como entrada não-confiável.
 3. **Superfície deste ecossistema** — SSRF em chamadas de IA, condição de corrida em
    economia/quest, aleatoriedade insegura em tokens, path traversal.
+4. **Qualidade, conformidade e boas práticas** — tiradas dos achados que o MDL Shield publica
+   nesses tipos, cada regra citando o caso real que a originou: API do core contornada
+   (escrita direta em tabela do core, `logstore_standard_log`, `curl` cru, DDL fora do
+   upgrade), estado inválido que a escrita deixa criar, formulário sem `validation()`,
+   Privacy Provider declarando menos do que o plugin grava, texto fixo visível ao usuário,
+   N+1 em caminho comum. Inclui a régua que separa `low` de `info` — é ela que decide o A+.
+
+### Checagens determinísticas
+
+`audit_static_checks.py` procura, sem IA, padrões que o MDL Shield já reportou numa revisão
+pública: arquivo de sistema no pacote (`.DS_Store`), leitura de `logstore_standard_log`, HTTP
+sem o cliente do core, download com `header()`/`readfile()`, `unserialize()` sem
+`allowed_classes`, DDL fora do upgrade, escrita direta em tabela do core, parâmetro
+implicitamente nullable, saída de depuração, `mod_form.php` sem `validation()`, `define()` no
+`lib.php` sem guarda, CI com checagens desligadas e README contradizendo o `version.php`.
+
+Precisão de grep basta para levantar um candidato, não para confirmar: `curl_init()` dentro de
+um wrapper que já aplica as regras do admin é legítimo. Por isso quase todo achado dessas
+checagens passa pela mesma verificação da Fase D. Só fatos que dispensam julgamento (o
+`.DS_Store` no pacote, o parâmetro implicitamente nullable) entram direto. Todas as
+ocorrências de uma checagem viram um achado só, com todos os locais — como o MDL Shield
+reporta um padrão.
 
 ### Grade
 
-A nota é **dominada pelo pior achado**, não por soma de penalidades:
+A nota é **dominada pelo pior achado**, não por soma de penalidades, e **conta os quatro
+tipos**:
 
 | Pior achado presente | Nota |
 |---|---|
 | `critical` | **F** |
 | `high` | **D** |
-| `medium` | **C** |
-| 3+ `low` | **B+** |
-| 1–2 `low` | **A** |
-| nenhum (ou só `info`) | **A+** |
+| `medium` (só existe em segurança) | **B+** |
+| 6+ `low` | **B+** |
+| 1–5 `low` | **A** |
+| nenhum `low` (só `info`, ou nada) | **A+** |
 
-**Só achados de segurança contam** — bugs de código triados do PHPStan vão numa seção
-separada e não afetam a nota.
+O relatório mostra também a **nota só de segurança**, para continuidade com os relatórios
+anteriores à inclusão dos outros tipos.
 
-O modelo aditivo original (100 − penalidades) foi abandonado porque distorce um relatório de
-segurança: ele diz que oito falhas de higiene são piores que um XSS armazenado. Um relatório
-com um `high` não é "quase tudo bem" — o achado principal define a nota.
+Por que os quatro tipos contam: em 18 revisões públicas do MDL Shield (out/2026), dos 44
+achados `low`, só 5 eram de segurança — 26 eram de qualidade de código, 7 de boa prática e 5
+de conformidade. Um único `low` de qualidade basta para tirar o A+ (`tool_aiagent`: um achado
+só, `low` de qualidade → A); `info` não tira (`mod_profilefield`, o único A+ da amostra, tem
+um `info`). Uma nota que só contasse segurança daria A+ a plugins que lá tiram A.
 
-A curva foi calibrada contra três relatórios publicados do MDL Shield e os reproduz
-exatamente: `block_playerhud` (2 low + 1 info → A), `local_information_center` (8 low + 1
-info → B+) e `filter_playerhud` (1 high + 1 medium + 1 low + 1 info → D). Repare que oito
-`low` mal movem a nota, enquanto um único `high` despenca para D — é essa assimetria que a
-fórmula aditiva não conseguia expressar.
+O modelo aditivo original (100 − penalidades) foi abandonado porque distorce o relatório: ele
+diz que oito falhas de higiene são piores que um XSS armazenado. A curva ainda não é uma
+função perfeita das contagens — o próprio MDL Shield já deu A e B+ para a mesma contagem de
+achados — então discordâncias pontuais na fronteira (um `medium`, 5-6 `low`) são esperadas.
 
 ### Opções
 
@@ -748,17 +781,19 @@ fórmula aditiva não conseguia expressar.
 
 Segue a forma de um relatório de revisão de segurança profissional, na ordem em que se lê:
 
-1. **Nota geral** — grade em letra, pontuação e tabela por severidade
-2. **Sumário executivo** — postura de segurança e o que os achados significam na prática
+1. **Nota geral** — grade em letra, nota só de segurança e tabela tipo × severidade
+2. **Sumário executivo** — postura geral e o que os achados de cada tipo significam na prática
 3. **Metodologia** — escopo (arquivos/linhas), o que foi examinado, superfície de ataque,
    evidências de rigor (Privacy API, capabilities, backup, testes) e dependências de terceiro
-4. **Achados** — cada um com severidade/categoria/regra/quem explora, locais afetados,
-   **trecho do código**, descrição, avaliação de impacto, mitigações já presentes, prova de
-   conceito e correção recomendada. Quando a Fase E consolida dois ou mais achados
-   independentes na mesma causa raiz, o resultado traz uma nota "Consolidado" explicando
-   por quê, e os locais afetados de todos os achados originais aparecem juntos
-5. **Pontos fortes de segurança** — práticas defensivas verificadas no código
-6. **Bugs de código (PHPStan triado)** — separados, não afetam a nota
+4. **Achados** — por severidade e tipo, cada um com severidade/tipo/categoria/regra/origem,
+   locais afetados, **trecho do código**, descrição, avaliação de impacto, mitigações já
+   presentes, prova de conceito (segurança) ou cenário de falha (demais tipos) e correção
+   recomendada. Quando a Fase E consolida dois ou mais achados independentes na mesma causa
+   raiz, o resultado traz uma nota "Consolidado" explicando por quê, e os locais afetados de
+   todos os achados originais aparecem juntos
+5. **Pontos fortes** — práticas verificadas no código
+6. **Bugs de código (PHPStan triado)** — registro bruto da triagem; os confirmados na Fase D
+   também aparecem em Achados e contam na nota
 7. **Descartados na verificação** — candidatos refutados, para transparência e calibragem
 8. **Conclusão**
 
@@ -806,6 +841,42 @@ precisa de triagem por IA para ser usável.
 
 Validador Mustache completo não está instalado (só existe no `moodle-plugin-ci`); o
 pre-commit faz o check leve de `@template` + chaves balanceadas.
+
+### Calibração contra o MDL Shield — `moodle-security-audit-calibrate`
+
+Cada revisão pública do MDL Shield aponta o repositório e o commit que avaliou (todo achado
+tem link para `github.com/<dono>/<repo>/blob/<sha>/<arquivo>#L<linha>`). Isso a torna
+gabarito: o calibrador clona aquele commit, roda a auditoria nele e compara achado por achado.
+É a única forma objetiva de saber se uma mudança no catálogo aproximou a auditoria do MDL
+Shield, em vez de julgar plugin a plugin, no olho.
+
+```bash
+moodle-security-audit-calibrate list                     # revisões públicas
+moodle-security-audit-calibrate fetch <revisão>          # baixa o gabarito (sem cota)
+moodle-security-audit-calibrate run <revisão>            # clona, audita e compara (gasta cota)
+moodle-security-audit-calibrate compare <revisão>        # recompara a última auditoria (sem cota)
+moodle-security-audit-calibrate summary                  # uma linha por revisão comparada
+```
+
+`<revisão>` é um slug do `list`, uma URL do mdlshield.com ou o caminho de um **export Markdown
+do dashboard** — é assim que entram as revisões privadas dos seus próprios plugins.
+
+Um achado do MDL Shield conta como encontrado quando a auditoria local reporta algo no mesmo
+arquivo a até 30 linhas de qualquer local citado (as duas ferramentas costumam ancorar o
+mesmo defeito em linhas diferentes da mesma função). A comparação lista os achados do MDL
+Shield encontrados e perdidos, os que só a auditoria local achou, a nota dos dois lados e o
+recall por tipo. O `summary` agrega tudo, e é o número a acompanhar entre uma mudança de
+catálogo e outra.
+
+Revisões sem link de código (algumas citam arquivos só como texto) usam o repositório do
+cabeçalho da página e a tag da release; se nem a tag existir, a comparação roda contra o
+branch padrão, com aviso. O PHPStan fica desligado por padrão (`--with-phpstan` liga): o clone
+vive fora da árvore do Moodle e o PHPStan só geraria ruído ali.
+
+Tudo fica em `~/.moodle-security-audit-cache/calibration/<revisão>/` (gabarito, clone,
+comparação) — páginas de terceiros não entram neste repositório. Comece pelas revisões
+pequenas (`mod_profilefield`, o único A+ público, serve de controle negativo: a auditoria não
+deveria achar nenhum `low` ali); cada `run` é uma auditoria completa.
 
 ---
 
