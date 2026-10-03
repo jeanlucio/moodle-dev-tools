@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# moodle-security-audit — auditoria de um plugin Moodle nos mesmos quatro tipos de achado do
-# MDL Shield (segurança, qualidade de código, conformidade, boa prática): ferramentas
-# determinísticas + revisão por IA, num relatório único.
+# moodle-security-audit — auditoria de um plugin Moodle em quatro tipos de achado
+# (segurança, qualidade de código, conformidade, boa prática): ferramentas determinísticas +
+# revisão por IA, num relatório único.
 #
 # Complementa o pre-commit, que revisa DIFFS. Achado que exige ler o plugin inteiro e seguir
 # cadeia de chamada entre arquivos (ex.: uma variável sanitizada com format_string() e a irmã
@@ -24,8 +24,8 @@
 #   --with-moodlecheck   : roda também o local_moodlecheck (PHPDoc; release, não segurança).
 #   --no-verify          : pula o passe de verificação (mais rápido, mais falso positivo).
 #   --with-tests         : lê também a pasta tests/ a fundo. Fica de fora por padrão porque
-#                          custa mais cota (o início da rodada mostra quanto); o MDL Shield lê
-#                          os testes, então vale incluir quando houver cota.
+#                          custa mais cota (o início da rodada mostra quanto). Vale incluir
+#                          quando houver cota: teste quebrado também conta como achado.
 #   --no-cache           : ignora o cache de lotes.
 #   --json               : grava também o relatório em JSON.
 #   --from-json ARQ      : re-renderiza o relatório de um JSON já gerado, sem refazer a

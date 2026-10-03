@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Audit of a single Moodle plugin: deterministic tools + AI review.
 
-Covers the same four finding types MDL Shield grades on — security, code quality,
-compliance and best practice — so the grade here tracks the public one there.
+Covers four finding types — security, code quality, compliance and best practice — and
+the grade counts all of them, not just security.
 
 Pipeline (see README "Auditoria de segurança"):
   A. deterministic collection (PHPStan at a high level, pattern checks from
@@ -69,7 +69,7 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 
 # Bumped whenever a prompt changes, so cached results from an older prompt are not reused.
 # v2: scan prompt gained extra_locations/mitigations; severity calibration rewritten.
-# v3: four finding types (MDL Shield's taxonomy), separate verification for non-security
+# v3: four finding types, separate verification for non-security
 #     findings, Layer 4 of the rule catalog.
 # v4: L1-PERM-2 split — a wrong captype alone is info, a missing riskbitmask stays low.
 #     The catalog is the system prompt but not part of the cache key, so a rule change that
@@ -77,7 +77,8 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 # v5: re-calibrated on all 67 graded public reviews — medium allowed for code_quality,
 #     new Layer 4 rules (L4-BUG-1, L4-VER-*, L4-ROB-6, L4-HYG-7..9, L4-PRIV-2, L4-BP-5).
 # v6: --with-tests; scan and quality verification told which rules apply inside tests/.
-PROMPT_VERSION = '6'
+# v7: prompts and catalog reworded as this tool's own methodology (no outside references).
+PROMPT_VERSION = '7'
 
 CLAUDE_TIMEOUT = 900
 
@@ -94,9 +95,8 @@ PHPSTAN_NOISE_IDENTIFIERS = {
 
 SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info']
 
-# The same four finding types MDL Shield labels its findings with. Its public grade counts
-# all of them, not just security — in a sample of 18 public reviews (Oct 2026) only 5 of the
-# 44 low findings were security ones — so the grade here counts all of them too.
+# The grade counts all four types, not just security: in the calibration sample (67 public
+# plugin reviews, Oct 2026) only 25 of the 188 low findings were security ones.
 FINDING_TYPES = ['security', 'code_quality', 'compliance', 'best_practice']
 FINDING_TYPE_LABELS = {
     'security': 'segurança',
@@ -110,12 +110,12 @@ FINDING_TYPE_LABELS = {
 SKIP_DIRS = {'amd/build', 'node_modules', 'vendor', '.git', 'docs', '.plans'}
 METADATA_ONLY_DIRS = {'tests', 'lang'}
 # tests/ is metadata-only by default because reading it costs a third to a half more quota
-# per run, yet MDL Shield does read it: two of its public findings were broken tests (one
-# inserting into a removed column, JS tests that can never fail). --with-tests scans it.
+# per run, yet broken tests do count: the calibration sample has two (one inserting into a
+# removed column, JS tests that can never fail). --with-tests scans it.
 TESTS_DIR = 'tests'
 
 SCAN_EXTENSIONS = {'.php', '.js', '.mustache', '.xml', '.css'}
-# Scanned only where MDL Shield has been seen to find something in them: a README stating
+# Scanned only where the calibration sample has findings in them: a README stating
 # requirements that contradict version.php, a CI workflow with its checks switched off.
 ROOT_DOC_EXTENSIONS = {'.md'}
 WORKFLOW_DIR = '.github/workflows'
@@ -407,8 +407,8 @@ procurando achados dos QUATRO tipos do catálogo do seu prompt de sistema: vulne
 segurança (Camadas 1-3) e defeitos de qualidade, conformidade e boa prática (Camada 4).
 
 Segurança vem primeiro: um XSS ou um acesso indevido pesa mais que qualquer achado de
-qualidade. Mas não pare aí — a nota pública do MDL Shield, que esta auditoria imita, conta os
-quatro tipos, e um único "low" de qualidade já tira o A+.
+qualidade. Mas não pare aí — a nota desta auditoria conta os quatro tipos, e um único "low"
+de qualidade já tira o A+.
 
 Leia cada arquivo por completo com a ferramenta Read. Você PODE e DEVE ler outros arquivos do
 plugin (Grep/Glob/Read) quando precisar confirmar um achado — seguir a cadeia de chamada é o
@@ -582,7 +582,7 @@ def normalize_finding(finding):
     Anything without a known finding_type is treated as security (every finding was security
     before the four types existed, so older JSON reports stay meaningful). Outside security
     the catalog caps severity: code_quality may reach medium (a bug that switches a main
-    feature off entirely — MDL Shield graded two such cases medium), compliance and
+    feature off entirely — the calibration sample has two such cases), compliance and
     best_practice stop at low.
     """
     if finding.get('finding_type') not in FINDING_TYPES:
@@ -898,9 +898,8 @@ def compute_grade(findings):
     "worse" than one stored XSS, yet any penalty-sum model says exactly that. So the worst
     severity present sets a ceiling, and only the count of low findings refines it.
 
-    Every finding type counts, the way MDL Shield's public grade does. Calibrated
-    (2026-10-02) on all 67 graded public reviews on mdlshield.com (Apr-Oct 2026), grade by
-    (medium, low) counts:
+    Every finding type counts. Calibrated (2026-10-02) on a sample of 67 graded public
+    plugin reviews (Apr-Oct 2026), grade by (medium, low) counts:
       - A+ (5): zero low and zero medium, with at most one info.
       - A (50): 1-4 low in 48 of them; 5 low twice; 7 low once.
       - B+ (10): one medium in 7 (with 2-7 low); no medium but 5 low (twice) or 8 low (twice).
@@ -910,11 +909,11 @@ def compute_grade(findings):
     (identical count tuples got both grades), resolved here as A with a warning in the
     reason; 8+ low is always B+. One medium is B+ (7 of 8 cases); two are B.
 
-    No public review has a high or critical finding. Those ceilings come from the author's
-    own dashboard reviews: 1 high + 1 medium + 1 low + 1 info -> D (filter_playerhud
-    2026-08-02); 1 high + 3 medium + 4 low -> C (block_playerhud 2026-04-29). MDL Shield's
-    grade is not a pure function of the counts — the 5-7 low band proves it — so expect
-    disagreement at the boundaries as an inherent limit of a label-only formula.
+    No public review in the sample has a high or critical finding. Those ceilings come from
+    private reviews of the author's own plugins: 1 high + 1 medium + 1 low + 1 info -> D
+    (filter_playerhud 2026-08-02); 1 high + 3 medium + 4 low -> C (block_playerhud
+    2026-04-29). The sample's grades are not a pure function of the counts — the 5-7 low band
+    proves it — so a label-only formula is an approximation at the boundaries.
     """
     counts = severity_counts(findings)
     if counts['critical']:
@@ -929,7 +928,7 @@ def compute_grade(findings):
         return 'B+', f'{counts["low"]} achados de severidade baixa'
     if counts['low'] >= 5:
         return 'A', (f'{counts["low"]} achados de severidade baixa — faixa de fronteira: com 5 a'
-                     ' 7 lows o MDL Shield já deu tanto A quanto B+')
+                     ' 7 lows a nota pode ficar entre A e B+')
     if counts['low']:
         return 'A', f'{counts["low"]} achado(s) de severidade baixa'
     if counts['info']:
@@ -951,8 +950,8 @@ def type_counts(findings):
 def phpstan_candidates(triaged):
     """PHPStan messages the triage judged real, as candidates for Phase D.
 
-    MDL Shield reports a real bug (a setting read that does not exist, an always-false
-    comparison) as a code-quality finding that counts against the grade, so a triaged real
+    A real bug (a setting read that does not exist, an always-false comparison) is a
+    code-quality finding that counts against the grade, so a triaged real
     bug can no longer live only in a side table. Each one goes through the same verification
     as the AI scan's candidates; the table in the report stays as the raw triage record.
     """
@@ -1101,11 +1100,8 @@ def render_report(ctx):
     add('> A nota é **dominada pelo pior achado**, não por soma de penalidades: um `critical`'
         ' resulta em `F`, um `high` em `D`, dois `medium` em `B`, um `medium` em `B+`; só de'
         ' `low` a nota é `A` (até 7, com 5 a 7 sendo fronteira) ou `B+` (8 ou mais); sem `low`,'
-        ' `A+` — achados `info` não tiram o A+. **Os quatro tipos contam**, como na nota'
-        ' pública do MDL Shield: um único `low` de qualidade de código já limita a nota a `A`.'
-        ' Calibrado sobre as 67 revisões públicas com nota do MDL Shield — aproximação mais'
-        ' próxima possível, não garantia de nota idêntica: o próprio MDL Shield já deu notas'
-        ' diferentes para a mesma contagem de achados.')
+        ' `A+` — achados `info` não tiram o A+. **Os quatro tipos contam**: um único `low` de'
+        ' qualidade de código já limita a nota a `A`.')
     add('')
 
     # ---- Sumário executivo ------------------------------------------------
@@ -1347,7 +1343,7 @@ def main():
     parser.add_argument('--with-moodlecheck', action='store_true')
     parser.add_argument('--no-verify', action='store_true')
     parser.add_argument('--with-tests', action='store_true',
-                        help='lê também tests/ a fundo (o MDL Shield lê; custa mais cota)')
+                        help='lê também tests/ a fundo (custa mais cota)')
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--from-json', default=None,

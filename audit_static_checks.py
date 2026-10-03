@@ -1,7 +1,7 @@
 """Deterministic checks for moodle-security-audit (Phase A).
 
-Each check looks for one pattern that MDL Shield has reported as a finding in a public review
-(the rule ids point at Layer 4 of security-rules.md, where each case is cited). Grep-level
+Each check looks for one pattern that the rule catalog treats as a finding (the rule ids point
+at Layer 4 of security-rules.md, where the reference cases are cited). Grep-level
 precision is enough to raise a candidate, not to confirm one: `curl_init()` inside a wrapper
 that already enforces the egress rules is fine, `error_log()` in a CLI script is fine. So
 almost every check yields a *candidate* that goes through the same Phase D verification as
@@ -9,7 +9,7 @@ the AI scan's candidates. Only facts that need no judgement (a .DS_Store in the 
 implicitly nullable parameter) are marked `deterministic` and skip verification.
 
 All occurrences of one check are folded into a single finding with `extra_locations`, the way
-MDL Shield reports a pattern once with every place it occurs — it also keeps Phase D at one
+a review reports a pattern once with every place it occurs — it also keeps Phase D at one
 call per check rather than one per line.
 """
 
@@ -341,13 +341,13 @@ def check_lib_define_guard(plugin_dir, scan_files):
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
         'rule_id': 'L4-HYG-6',
         'description': 'lib.php define constantes globais com define() e não tem a guarda '
-                       'MOODLE_INTERNAL. O MDL Shield reporta isso como low; o moodle-cs, por '
-                       'outro lado, trata define() como declaração e acusa "Unexpected '
-                       'MOODLE_INTERNAL check" se a guarda for acrescentada.',
+                       'MOODLE_INTERNAL. O moodle-cs, por outro lado, trata define() como '
+                       'declaração e acusa "Unexpected MOODLE_INTERNAL check" se a guarda for '
+                       'acrescentada.',
         'recommendation': 'Trocar os define() por constantes de uma classe autoloaded (ex.: '
                           '\\<componente>\\local\\constants::NOME), o que satisfaz os dois '
-                          'verificadores. Acrescentar a guarda resolve o MDL Shield mas quebra '
-                          'o PHPCS.',
+                          'lados. Acrescentar a guarda resolve este achado mas quebra o '
+                          'PHPCS.',
     }, [('lib.php', _line_of(content, match.start()))])]
 
 
