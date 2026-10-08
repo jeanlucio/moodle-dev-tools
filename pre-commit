@@ -58,14 +58,14 @@ if [ -n "$PHP_STAGED" ]; then
     echo "php -l: verificando sintaxe..."
 
     LINT_ERRORS=0
-    while IFS= read -r FILE; do
+    while IFS= read -r FILE <&3; do
         [ -f "$FILE" ] || continue
         OUTPUT=$(php -l "$FILE" 2>&1)
         if [ $? -ne 0 ]; then
             echo "$OUTPUT" | grep -viE 'xdebug|step debug'
             LINT_ERRORS=1
         fi
-    done <<< "$PHP_STAGED"
+    done 3<<< "$PHP_STAGED"
 
     if [ $LINT_ERRORS -ne 0 ]; then
         echo "--------------------------------------------------------------"
@@ -85,7 +85,7 @@ if [ -n "$PHP_STAGED" ]; then
     echo ""
 
     PHPCS_ERRORS=0
-    while IFS= read -r FILE; do
+    while IFS= read -r FILE <&3; do
         [ -f "$FILE" ] || continue
         OUTPUT=$($PHPCS "$FILE" 2>&1)
         if [ $? -ne 0 ]; then
@@ -93,7 +93,7 @@ if [ -n "$PHP_STAGED" ]; then
             echo ""
             PHPCS_ERRORS=1
         fi
-    done <<< "$PHP_STAGED"
+    done 3<<< "$PHP_STAGED"
 
     if [ $PHPCS_ERRORS -ne 0 ]; then
         echo "--------------------------------------------------------------"
@@ -185,7 +185,7 @@ if [ -n "$JS_STAGED" ]; then
         echo ""
 
         ESLINT_ERRORS=0
-        while IFS= read -r FILE; do
+        while IFS= read -r FILE <&3; do
             [ -f "$FILE" ] || continue
             # Captura o RC do eslint direto (sem pipe na mesma linha, senão $? não o reflete);
             # só então filtra o ruído do browserslist da saída exibida.
@@ -205,7 +205,7 @@ if [ -n "$JS_STAGED" ]; then
                 echo ""
                 ESLINT_ERRORS=1
             fi
-        done <<< "$JS_STAGED"
+        done 3<<< "$JS_STAGED"
 
         if [ $ESLINT_ERRORS -ne 0 ]; then
             echo "--------------------------------------------------------------"
@@ -223,7 +223,7 @@ if [ -n "$JS_STAGED" ]; then
     if [ -n "$SRC_STAGED" ]; then
         BUILD_STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep 'amd/build/')
         AMD_WARN=0
-        while IFS= read -r SRC; do
+        while IFS= read -r SRC <&3; do
             [ -z "$SRC" ] && continue
             BUILD="${SRC/amd\/src\//amd\/build\/}"
             BUILD="${BUILD%.js}.min.js"
@@ -233,7 +233,7 @@ if [ -n "$JS_STAGED" ]; then
                 echo "  $SRC → rode 'npx grunt amd' e adicione $BUILD"
                 AMD_WARN=1
             fi
-        done <<< "$SRC_STAGED"
+        done 3<<< "$SRC_STAGED"
     fi
 fi
 
@@ -249,7 +249,7 @@ if [ -n "$CSS_STAGED" ]; then
         echo ""
 
         STYLELINT_ERRORS=0
-        while IFS= read -r FILE; do
+        while IFS= read -r FILE <&3; do
             [ -f "$FILE" ] || continue
             # O CI roda via 'grunt stylelint:css' (moodle-plugin-ci grunt --max-lint-warnings 0);
             # a CLI direta usa o .stylelintrc auto-descoberto subindo a árvore a partir do
@@ -264,7 +264,7 @@ if [ -n "$CSS_STAGED" ]; then
                 echo ""
                 STYLELINT_ERRORS=1
             fi
-        done <<< "$CSS_STAGED"
+        done 3<<< "$CSS_STAGED"
 
         if [ $STYLELINT_ERRORS -ne 0 ]; then
             echo "--------------------------------------------------------------"
@@ -285,7 +285,7 @@ if [ -n "$MUSTACHE_STAGED" ]; then
     echo "mustache: verificando arquivos staged..."
 
     MUSTACHE_ERRORS=0
-    while IFS= read -r FILE; do
+    while IFS= read -r FILE <&3; do
         [ -f "$FILE" ] || continue
         # @template é obrigatório — o moodle-plugin-ci mustache falha sem ele.
         if ! grep -q '@template[[:space:]]' "$FILE"; then
@@ -298,7 +298,7 @@ if [ -n "$MUSTACHE_STAGED" ]; then
         if [ "$OPEN" -ne "$CLOSE" ]; then
             echo "  aviso $FILE: chaves mustache possivelmente desbalanceadas (\`{{\`=$OPEN, \`}}\`=$CLOSE)"
         fi
-    done <<< "$MUSTACHE_STAGED"
+    done 3<<< "$MUSTACHE_STAGED"
 
     if [ $MUSTACHE_ERRORS -ne 0 ]; then
         echo "--------------------------------------------------------------"
@@ -340,14 +340,14 @@ if [ -n "$FEATURE_STAGED" ]; then
         echo "gherkinlint: verificando arquivos staged..."
 
         GHERKIN_ERRORS=0
-        while IFS= read -r FILE; do
+        while IFS= read -r FILE <&3; do
             [ -f "$FILE" ] || continue
             OUTPUT=$("$GHERKIN_BIN" -c "$GHERKIN_RC" "$FILE" 2>&1)
             if [ $? -ne 0 ]; then
                 printf '%s\n' "$OUTPUT"
                 GHERKIN_ERRORS=1
             fi
-        done <<< "$FEATURE_STAGED"
+        done 3<<< "$FEATURE_STAGED"
 
         if [ $GHERKIN_ERRORS -ne 0 ]; then
             echo "--------------------------------------------------------------"
@@ -422,13 +422,13 @@ LINES_PER_FILE=$(( 2000 / FILE_COUNT ))
 [ "$LINES_PER_FILE" -lt 50 ] && LINES_PER_FILE=50
 
 DIFF=""
-while IFS= read -r FILE; do
+while IFS= read -r FILE <&3; do
     [ -z "$FILE" ] && continue
     FILE_DIFF=$(git diff --cached -- "$FILE" \
         | grep -v "$LICENSE_FILTER" \
         | head -n "$LINES_PER_FILE")
     [ -n "$FILE_DIFF" ] && DIFF+="${FILE_DIFF}"$'\n'
-done <<< "$AI_STAGED"
+done 3<<< "$AI_STAGED"
 
 [ -z "$DIFF" ] && exit 0
 
