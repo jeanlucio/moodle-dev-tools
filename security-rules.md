@@ -383,6 +383,21 @@ do que separa um A de um A+.
   agendada, relatório ou web service) quando `get_recordset()` ou paginação resolveriam.
   `best_practice`/`performance`, `low`. *(Casos de referência: `logstore_xapi`,
   `local_profilefield_autofill`.)*
+- **L4-ROB-7** — Capability concedida em `db/access.php` a um papel que o usuário recebe **ao
+  se matricular** num curso (`editingteacher`, `teacher`, `student`) mas verificada só contra
+  `context_system::instance()` (ou contexto de usuário). O papel de curso não tem efeito ali:
+  quem a recebe só pelo curso nunca passa na checagem, o recurso some ou a página responde
+  "sem permissão" para o público a que se destina, e nada acusa erro. Confira, para cada
+  `has_capability()`/`require_capability()` com uma capability do próprio plugin: (a) o contexto
+  é o do curso ou do módulo onde o recurso é usado? (b) se não há curso (preferências, página
+  pessoal), a checagem no sistema vem acompanhada de `get_user_capability_course()`?
+  Não é achado: capability só de `manager`/administrador (`moodle/site:config`), a que também
+  vai ao arquétipo `user` (todo usuário autenticado), e o caso deliberado e documentado em que o
+  recurso pertence ao site inteiro. `code_quality`/`business_logic`, `low`; sobe para `medium`
+  quando a capability protege a função central do plugin. *(Casos de referência:
+  `local_aihub` v1.3.2 `usepersonalkey` e `mod_codereview` `usepersonaltoken`, ambos corrigidos
+  em 08/10/2026 depois de meses sem relato, porque o recurso é opcional e o resto continuava
+  funcionando com a chave do site; `local_playergames` `viewdashboard`.)*
 
 **Bugs de código**
 
@@ -516,12 +531,21 @@ do que separa um A de um A+.
   *(Casos de referência: `tiny_cloze`, `local_information_center`.)* Sem `--with-tests` a pasta
   `tests/` não é lida e esta regra não se aplica.
 
+- **L4-TEST-2** — Teste que concede a capability de um recurso **apenas por um papel atribuído no
+  contexto de sistema** (`role_assign($roleid, $userid, context_system::instance())`, em geral
+  com o papel `manager`), quando db/access.php a concede a papéis de curso (`editingteacher`,
+  `teacher`, `student`). É o único jeito em que uma checagem só no sistema (`L4-ROB-7`) funciona,
+  então a suíte passa e esconde o defeito. O teste deve matricular o usuário no curso com o papel
+  do arquétipo (`create_and_enrol($course, 'editingteacher')`) e incluir o caso do estudante, que
+  continua sem acesso. `code_quality`/`robustness`, `low`. *(Casos de referência: `local_aihub`
+  `lib_test::create_permitted_user`, que usava `manager` no sistema.)*
+
 **Quais regras valem dentro de `tests/`.** Teste não roda em produção e existe justamente
 para montar cenários que o código de produção não deveria montar. Antes de reportar algo num
 arquivo de `tests/` (testes PHPUnit, geradores em `tests/generator/`, contextos e features do
 Behat, fixtures), confira esta lista:
 
-- **Valem:** `L4-TEST-1`; cabeçalho GPL e `@package` (`L4-HYG-9` — o Plugin Directory exige em
+- **Valem:** `L4-TEST-1`, `L4-TEST-2`; cabeçalho GPL e `@package` (`L4-HYG-9` — o Plugin Directory exige em
   todo arquivo); sintaxe depreciada da versão de PHP suportada (`L4-HYG-3`); e um
   `L4-BUG-1` que faça o teste não testar o que diz testar (aí reporte como `L4-TEST-1`).
   Também vale qualquer coisa num arquivo de `tests/` que **o código de produção carrega**

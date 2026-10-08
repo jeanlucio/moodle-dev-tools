@@ -421,10 +421,12 @@ Procure ativamente, além das regras de segurança:
 - estados que a escrita deixa criar e a leitura rejeita para sempre (L4-ROB-2);
 - formulários sem validation() para limites que, violados, quebram a atividade (L4-ROB-1);
 - APIs do core contornadas (L4-API-*), Privacy Provider declarando menos do que o plugin
-  grava (L4-PRIV-1), texto fixo visível ao usuário (L4-HYG-1).
+  grava (L4-PRIV-1), texto fixo visível ao usuário (L4-HYG-1);
+- capability dada a papel de curso (professor, estudante) mas checada só no contexto de
+  sistema, onde esse papel não vale (L4-ROB-7): o recurso some para quem deveria usá-lo.
 
 Arquivos de tests/ (quando estiverem no lote) seguem a lista "Quais regras valem dentro de
-tests/" do catálogo: lá só valem L4-TEST-1, cabeçalho GPL e sintaxe depreciada. Gravar direto
+tests/" do catálogo: lá só valem L4-TEST-1, L4-TEST-2, cabeçalho GPL e sintaxe depreciada. Gravar direto
 em tabela, texto fixo, $_POST simulado e consulta em laço são normais num teste.
 
 Seja conservador: só reporte o que tiver certeza. Nada de formatação de código nem PHPDoc.

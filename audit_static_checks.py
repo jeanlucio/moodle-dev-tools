@@ -608,12 +608,134 @@ def check_bundled_without_thirdpartylibs(plugin_dir, scan_files):
     }, [(f, 1) for f in hits])]
 
 
+# Roles whose capabilities come from an enrolment in a course. A role assigned there never
+# reaches the system context, so a capability granted to these and checked only against the
+# system context is invisible to the people it was written for (L4-ROB-7).
+COURSE_ROLES = {'editingteacher', 'teacher', 'student'}
+CAPABILITY_HEAD_RE = re.compile(r"'([\w/]+:\w+)'\s*=>\s*\[")
+CAPABILITY_CALL_RE = re.compile(
+    r'\b(?:has_capability|require_capability|has_any_capability|has_all_capabilities|'
+    r'require_all_capabilities|require_any_capability)\s*\(')
+SYSTEM_CONTEXT_RE = re.compile(r'context_system::instance|context_user::instance|CONTEXT_SYSTEM')
+ANY_COURSE_RE = re.compile(r'get_user_capability_course\s*\(|get_user_capability_contexts\s*\(')
+
+
+def _split_call_args(src, start):
+    """The top-level arguments of the call whose opening parenthesis ends at `start`."""
+    depth, quote, current, args = 1, None, '', []
+    i = start
+    while i < len(src) and depth > 0:
+        char = src[i]
+        if quote:
+            current += char
+            if char == '\\' and i + 1 < len(src):
+                current += src[i + 1]
+                i += 1
+            elif char == quote:
+                quote = None
+        elif char in '\'"':
+            quote = char
+            current += char
+        elif char in '([{':
+            depth += 1
+            current += char
+        elif char in ')]}':
+            depth -= 1
+            if depth == 0:
+                args.append(current.strip())
+                break
+            current += char
+        elif char == ',' and depth == 1:
+            args.append(current.strip())
+            current = ''
+        else:
+            current += char
+        i += 1
+    return args
+
+
+def _course_role_capabilities(plugin_dir):
+    """Capabilities of db/access.php granted to a course role and not to every user."""
+    content = _read(plugin_dir / 'db' / 'access.php')
+    heads = list(CAPABILITY_HEAD_RE.finditer(content))
+    found = set()
+    for index, head in enumerate(heads):
+        end = heads[index + 1].start() if index + 1 < len(heads) else len(content)
+        roles = set(re.findall(r"'(\w+)'\s*=>\s*CAP_ALLOW", content[head.end():end]))
+        # The "user" archetype is every logged-in user, whose role does apply at the system.
+        if roles & COURSE_ROLES and 'user' not in roles:
+            found.add(head.group(1))
+    return found
+
+
+def _is_system_context(argument, preceding):
+    """Whether a context argument is, or was assigned from, the system or a user context."""
+    if SYSTEM_CONTEXT_RE.search(argument):
+        return True
+    variable = re.fullmatch(r'\$(\w+)', argument.strip())
+    if variable:
+        assigned = re.findall(r'\$' + variable.group(1) + r'\s*=\s*([^;]+);', preceding)
+        return bool(assigned) and bool(SYSTEM_CONTEXT_RE.search(assigned[-1]))
+    if argument.strip() == '$PAGE->context':
+        set_context = re.findall(r'\$PAGE->set_context\s*\(([^;]+)\)\s*;', preceding)
+        return bool(set_context) and bool(SYSTEM_CONTEXT_RE.search(set_context[-1]))
+    return False
+
+
+def check_capability_context(plugin_dir, scan_files):
+    own = _course_role_capabilities(plugin_dir)
+    if not own:
+        return []
+
+    locations, names = [], set()
+    for rel in _production_php(scan_files):
+        if rel.startswith('db/'):
+            continue
+        content = _read(plugin_dir / rel)
+        # A file that already looks for the capability in the user's courses has handled it.
+        if ANY_COURSE_RE.search(content):
+            continue
+        for match in CAPABILITY_CALL_RE.finditer(content):
+            args = _split_call_args(content, match.end())
+            if len(args) < 2:
+                continue
+            capability = args[0].strip('\'" ')
+            if capability not in own:
+                continue
+            if _is_system_context(args[1], content[max(0, match.start() - 2500):match.start()]):
+                locations.append((rel, _line_of(content, match.start())))
+                names.add(capability)
+
+    if not locations:
+        return []
+    return [_finding({
+        'title': 'Capability de papel de curso verificada só no contexto de sistema',
+        'finding_type': 'code_quality', 'severity': 'low', 'category': 'business_logic',
+        'rule_id': 'L4-ROB-7',
+        'description': 'A capability é concedida em db/access.php a um papel que o usuário '
+                       'recebe ao se matricular num curso (professor ou estudante), mas é '
+                       'verificada contra o contexto de sistema ou de usuário, onde esses '
+                       'papéis não têm efeito. Quem a recebe só pelo curso nunca passa na '
+                       'checagem: o recurso some ou a página responde "sem permissão" para o '
+                       'público a que se destina, sem erro nenhum.',
+        'impact': 'O recurso fica inacessível para o público-alvo; só quem tem papel no nível '
+                  'do site o vê, e os testes que atribuem o papel no sistema passam.',
+        'recommendation': 'Verificar no contexto do curso ou do módulo onde o recurso é usado. '
+                          'Em página de usuário sem curso (preferências, token pessoal), manter '
+                          'a checagem no sistema e acrescentar '
+                          'get_user_capability_course($cap, $userid, false, "", "", 1). '
+                          'Testar com o usuário matriculado no curso com o papel do arquétipo, '
+                          'nunca com um papel atribuído no sistema.',
+    }, locations, 'Capabilities envolvidas: ' + ', '.join(sorted(names)) + '.')]
+
+
 CHECKS = [
     check_junk_files, check_logstore, check_raw_http, check_raw_download, check_unserialize,
     check_ddl_outside_upgrade, check_core_table_writes, check_implicit_nullable,
     check_debug_leftovers, check_mod_form_validation, check_lib_define_guard,
     check_ci_disabled, check_superglobals, check_gpl_header, check_behat_in_production,
     check_remote_resources, check_bundled_without_thirdpartylibs,
+    check_capability_context,
 ]
 
 

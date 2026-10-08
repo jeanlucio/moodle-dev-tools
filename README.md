@@ -723,7 +723,8 @@ implicitamente nullable, saída de depuração, `mod_form.php` sem `validation()
 `lib.php` sem guarda, CI com checagens desligadas, README contradizendo o `version.php`,
 superglobais (`$_POST`, `$_SERVER`...), arquivo PHP sem cabeçalho GPL, `install.xml` com
 `PATH` de outro componente, infraestrutura do Behat carregada em produção, recurso remoto
-(fonte, script) carregado em tempo de execução e biblioteca empacotada sem
+(fonte, script) carregado em tempo de execução, capability de papel de curso checada só no
+contexto de sistema e biblioteca empacotada sem
 `thirdpartylibs.xml`.
 
 Precisão de grep basta para levantar um candidato, não para confirmar: `curl_init()` dentro de
