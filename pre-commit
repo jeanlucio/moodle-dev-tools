@@ -215,6 +215,27 @@ if [ -n "$JS_STAGED" ]; then
         fi
 
         echo "eslint: OK"
+
+        # Código novo em amd/src segue o padrão moderno (const/let, arrow, template literal,
+        # ===, async/await). O .eslintrc do Moodle não liga essas regras, então só as linhas
+        # que o commit adiciona são checadas — código antigo não bloqueia edições vizinhas.
+        MODERNJS_CHECKER="$HOME/moodle-dev-tools/check_modern_js.py"
+        MODERNJS_SRC=$(echo "$JS_STAGED" | grep 'amd/src/')
+        if [ "${SKIP_MODERN_JS}" = "1" ]; then
+            echo "modern-js ignorado (SKIP_MODERN_JS=1)"
+        elif [ -n "$MODERNJS_SRC" ] && [ -f "$MODERNJS_CHECKER" ]; then
+            echo "modern-js: verificando linhas novas em amd/src..."
+            if ! printf '%s\n' "$MODERNJS_SRC" | xargs python3 "$MODERNJS_CHECKER" "$ESLINT_BIN"; then
+                echo "--------------------------------------------------------------"
+                echo "  Commit bloqueado: JavaScript no estilo antigo em linhas novas."
+                echo "  Moderniza a linha, ou, numa edição consciente de código antigo:"
+                echo "  SKIP_MODERN_JS=1 git commit ...  (um eslint-disable não serve:"
+                echo "  o ESLint do Moodle acusa a diretiva como não usada)"
+                echo "--------------------------------------------------------------"
+                exit 1
+            fi
+            echo "modern-js: OK"
+        fi
     fi
 
     # Aviso (não bloqueia): amd/src editado sem o amd/build correspondente staged.

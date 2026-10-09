@@ -27,7 +27,7 @@ O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
 só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, Stylelint, gherkinlint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -42,6 +42,7 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
 | **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
 | **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
+| **modern-js** | `amd/src/*.js` staged | Roda no ESLint do Moodle as regras `no-var`, `prefer-const`, `prefer-arrow-callback`, `prefer-template`, `eqeqeq` e `promise/prefer-await-to-then` e bloqueia só as violações em linhas que o commit **adiciona ou altera** (código antigo vizinho não bloqueia) | Sim (`SKIP_MODERN_JS=1` para uma edição consciente de código antigo) |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
@@ -50,6 +51,13 @@ Notas:
   localizados subindo a árvore a partir do repositório. Se o plugin não estiver montado sob uma
   árvore Moodle (sem o binário acessível), o lint correspondente é **pulado sem bloquear** — o
   hook é global e não pode quebrar commits de repositórios fora do ecossistema Moodle.
+- **modern-js** existe porque o `.eslintrc` do Moodle não liga essas regras: sem o gate, `var`,
+  `function(){}` e concatenação voltam a entrar em `amd/src` depois de uma limpeza. Lintar o arquivo
+  inteiro bloquearia qualquer edição de um módulo antigo, então o `check_modern_js.py` lê a versão
+  *staged* do arquivo (`git show :arquivo`, para os números de linha baterem com o diff) e descarta o
+  que não está nas linhas adicionadas (`git diff --cached -U0`). Um `// eslint-disable-next-line`
+  **não** serve de exceção: o ESLint do Moodle acusa a diretiva como "não usada" (as regras estão
+  desligadas lá), o que bloquearia o commit — por isso a saída é a variável `SKIP_MODERN_JS=1`.
 - **Stylelint** filtra do output os avisos "rule is deprecated" que o `.stylelintrc` do Moodle
   sempre imprime (regras antigas mantidas por compatibilidade, não erros do arquivo em si) —
   mantém a saída de falha focada nos problemas reais.
