@@ -6,6 +6,11 @@
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
 
+# Pasta real deste repo, resolvida pelo caminho do próprio script (o hook é um symlink em
+# ~/.githooks). Não pode ser fixa em ~/moodle-dev-tools: no ambiente de aula o clone fica em
+# outro lugar e os gates com "[ -f checker ]" seriam pulados em silêncio.
+MDT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
 PHPCS="php -d auto_prepend_file=$HOME/.moodle-dev-tools/phpcs-bootstrap.php /usr/local/bin/phpcs --standard=moodle"
 
 # Exporta MDT_MOODLE_PUBLIC (e o resto de ~/.moodle-dev-tools.env) para os gates Python
@@ -112,7 +117,7 @@ fi
 #  automatizada — PHPCS/moodlecheck/PHPStan não sabem disso).        #
 # ------------------------------------------------------------------ #
 CAP_TRIGGER=$(echo "$PHP_STAGED" | grep -E '(^|/)db/access\.php$|(^|/)lang/en/[^/]+\.php$')
-CAP_CHECKER="$HOME/moodle-dev-tools/check_capability_strings.py"
+CAP_CHECKER="$MDT_DIR/check_capability_strings.py"
 if [ -n "$CAP_TRIGGER" ] && [ -f version.php ] && [ -f "$CAP_CHECKER" ]; then
     echo "capability-strings: verificando..."
     if ! python3 "$CAP_CHECKER" "$(pwd)"; then
@@ -128,7 +133,7 @@ fi
 #  get_string() — toda chamada com chave e componente literais       #
 #  precisa apontar pra uma string que existe de verdade.              #
 # ------------------------------------------------------------------ #
-GETSTRING_CHECKER="$HOME/moodle-dev-tools/check_get_string.py"
+GETSTRING_CHECKER="$MDT_DIR/check_get_string.py"
 if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$GETSTRING_CHECKER" ]; then
     echo "get_string: verificando..."
     if ! python3 "$GETSTRING_CHECKER" "$(pwd)" $PHP_STAGED; then
@@ -144,7 +149,7 @@ fi
 #  has_capability()/require_capability() — a capability referenciada #
 #  precisa existir de verdade em algum db/access.php.                 #
 # ------------------------------------------------------------------ #
-CAPEXISTS_CHECKER="$HOME/moodle-dev-tools/check_capability_exists.py"
+CAPEXISTS_CHECKER="$MDT_DIR/check_capability_exists.py"
 if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$CAPEXISTS_CHECKER" ]; then
     echo "capability-exists: verificando..."
     if ! python3 "$CAPEXISTS_CHECKER" "$(pwd)" $PHP_STAGED; then
@@ -161,7 +166,7 @@ fi
 #  arquivo.                                                            #
 # ------------------------------------------------------------------ #
 DUPTABLE_TRIGGER=$(echo "$XML_STAGED" | grep -E '(^|/)db/install\.xml$')
-DUPTABLE_CHECKER="$HOME/moodle-dev-tools/check_duplicate_tables.py"
+DUPTABLE_CHECKER="$MDT_DIR/check_duplicate_tables.py"
 if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$DUPTABLE_CHECKER" ]; then
     echo "duplicate-tables: verificando..."
     if ! python3 "$DUPTABLE_CHECKER" $DUPTABLE_TRIGGER; then
@@ -219,7 +224,7 @@ if [ -n "$JS_STAGED" ]; then
         # Código novo em amd/src segue o padrão moderno (const/let, arrow, template literal,
         # ===, async/await). O .eslintrc do Moodle não liga essas regras, então só as linhas
         # que o commit adiciona são checadas — código antigo não bloqueia edições vizinhas.
-        MODERNJS_CHECKER="$HOME/moodle-dev-tools/check_modern_js.py"
+        MODERNJS_CHECKER="$MDT_DIR/check_modern_js.py"
         MODERNJS_SRC=$(echo "$JS_STAGED" | grep 'amd/src/')
         if [ "${SKIP_MODERN_JS}" = "1" ]; then
             echo "modern-js ignorado (SKIP_MODERN_JS=1)"
@@ -335,7 +340,7 @@ fi
 #  @template/@module — o nome declarado bate com o caminho real do   #
 #  arquivo (o check acima só garante que a tag existe, não o valor). #
 # ------------------------------------------------------------------ #
-NAME_CHECKER="$HOME/moodle-dev-tools/check_template_module_names.py"
+NAME_CHECKER="$MDT_DIR/check_template_module_names.py"
 if { [ -n "$MUSTACHE_STAGED" ] || [ -n "$JS_STAGED" ]; } && [ -f version.php ] && [ -f "$NAME_CHECKER" ]; then
     echo "template/module-names: verificando..."
     if ! python3 "$NAME_CHECKER" "$(pwd)" $MUSTACHE_STAGED $JS_STAGED; then
