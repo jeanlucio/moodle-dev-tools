@@ -678,7 +678,7 @@ de vulnerabilidade não pode virar arquivo versionado num repositório público.
 
 | Fase | O que faz |
 |---|---|
-| **A** | Coleta determinística: PHPStan em nível alto, checagens de padrão (`audit_static_checks.py`), versões de libs empacotadas |
+| **A** | Coleta determinística: PHPStan em nível alto, checagens de padrão (`audit_static_checks.py`), execução dos validadores de URL do plugin contra entradas de bypass (`audit_url_probe.py`), versões de libs empacotadas |
 | **B** | **Triagem por IA** das mensagens do PHPStan: `real_bug` / `security_relevant` / `moodle_idiom_noise` |
 | **C** | Varredura semântica por IA, em lotes, com o agente lendo o código por conta própria — os quatro tipos de achado |
 | **D** | Verificação de **todo** candidato (varredura, checagens de padrão e bugs reais do PHPStan): os de segurança precisam ser explorável, os demais precisam de defeito real e passam pela régua `low`/`info`; quem não sobrevive é descartado |
@@ -732,8 +732,24 @@ implicitamente nullable, saída de depuração, `mod_form.php` sem `validation()
 superglobais (`$_POST`, `$_SERVER`...), arquivo PHP sem cabeçalho GPL, `install.xml` com
 `PATH` de outro componente, infraestrutura do Behat carregada em produção, recurso remoto
 (fonte, script) carregado em tempo de execução, capability de papel de curso checada só no
-contexto de sistema e biblioteca empacotada sem
-`thirdpartylibs.xml`.
+contexto de sistema, biblioteca empacotada sem
+`thirdpartylibs.xml`, e `\curl` do core usado sem o que os padrões dele deixam aberto:
+credencial enviada sem `CURLOPT_SSL_VERIFYPEER` (L3-TLS-1) e destino validado (filtro de IP
+ou DNS próprio) sem `CURLOPT_FOLLOWLOCATION => 0` e sem `CURLOPT_RESOLVE` (L3-SSRF-1).
+
+### Validadores de URL executados (`audit_url_probe.py`)
+
+Ler um validador não basta: o `is_safe_url()` do `local_aihub` v1.3.3 parecia certo linha a
+linha, tinha teste "bloqueia DNS rebinding" passando e ainda assim aprovava `[::1]`, `127.1`
+e `::ffff:127.0.0.1`. Por isso a Fase A **executa**, dentro do container
+(`MDT_CONTAINER_51`), todo método de `classes/` que recebe uma string com nome de URL
+(`$url`, `$endpoint`, `$host`...) e mora num arquivo que filtra faixas de IP. Cada método é
+chamado por reflection, numa instância criada sem construtor, com uma URL pública de controle
+e 19 entradas que precisam ser recusadas (formas alternativas de loopback, IPv6 com IPv4
+embutido, ULA, link-local, metadata de nuvem, `100.64.0.0/10`, host que não resolve). O que
+for aceito vira candidato `L3-SSRF-1`, que a Fase D julga só quanto à exploração. Método cuja
+resposta ao controle não é verdadeira (devolve mensagem de erro, URL normalizada) é pulado.
+Nada é gravado. Sem container disponível, a checagem é pulada com aviso.
 
 Precisão de grep basta para levantar um candidato, não para confirmar: `curl_init()` dentro de
 um wrapper que já aplica as regras do admin é legítimo. Por isso quase todo achado dessas

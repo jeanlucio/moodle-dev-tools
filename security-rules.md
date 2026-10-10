@@ -230,10 +230,40 @@ o guia oficial — quando as duas falarem do mesmo assunto, esta prevalece por s
 Não nomeadas pelas camadas acima, mas reais nestes plugins (o relatório público do
 `block_playerhud` elogiou justamente as defesas correspondentes — logo, é superfície viva).
 
-- **L3-SSRF-1** — Chamada HTTP externa com URL influenciável por config/usuário precisa
-  validar destino: forçar HTTPS, bloquear `localhost`/loopback, rejeitar faixas RFC-1918 e
-  reservadas (`FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE`) e **re-resolver os
-  registros A/AAAA** (senão o DNS rebinding passa). Categoria: `unauthorised_access`.
+- **L3-SSRF-1** — Chamada HTTP externa com URL influenciável por config ou usuário: o destino
+  **validado** tem que ser o destino **contatado**. Checar a URL antes da requisição não
+  basta — resolver o DNS antes **não** impede rebinding, porque o cURL resolve de novo ao
+  conectar. Exigir as quatro coisas:
+  1. **Validação do endereço:** HTTPS; recusar loopback, privado, link-local e reservado
+     (`FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE`) **e** o que esses flags deixam
+     passar — IPv4 embutido em IPv6 (`::ffff:127.0.0.1`, `::7f00:1`, NAT64 `64:ff9b::/96`),
+     `100.64.0.0/10` (onde nuvens como a Alibaba servem metadata), `192.0.0.0/24`,
+     `198.18.0.0/15`; IPv6 entre colchetes (`parse_url()` devolve `[::1]`, que não casa com
+     `::1` nem passa em `FILTER_VALIDATE_IP`).
+  2. **Falha fechada:** host que não é IP e cuja resolução volta **vazia** é recusado. Um laço
+     `foreach` sobre a lista vazia que termina em `return true` aprova `127.1`, `2130706433`,
+     `0x7f000001` e `0177.0.0.1`, que o resolvedor do cURL aceita como loopback.
+  3. **Sem redirect:** `CURLOPT_FOLLOWLOCATION => 0` (o `\curl` do core segue até 10 por
+     padrão e, com `setHeader()`, leva a credencial junto ao novo host), ou validação de cada
+     salto.
+  4. **IP fixado:** passar `CURLOPT_RESOLVE` com os endereços validados. Opção por chamada
+     sobrescreve a fixação do próprio core.
+  Na **severidade**, considere a ficha "Padrões do core" abaixo: num site padrão o helper de
+  segurança do core está **ligado** e barra redirect para RFC-1918/loopback/`169.254.169.254`;
+  o que sobra costuma ser faixa fora da blocklist padrão, ou site cujo admin esvaziou a lista
+  → em geral `low`/`medium`, e `high` só com caminho provado que contorna também o core.
+  Validação só da URL **não** é "ponto forte" de SSRF. Categoria: `unauthorised_access`.
+  *(Caso de referência: `local_aihub` 2026-10-09 — validação prévia com DNS, mas redirect
+  seguido, sem IP fixado e falha aberta em DNS vazio; o relatório da ferramenta a listou como
+  ponto forte.)*
+- **L3-TLS-1** — Requisição feita com `\curl` do core que leva credencial (`Authorization`,
+  `Bearer`, `x-api-key`/`x-goog-api-key`, token na URL ou no corpo) precisa ligar
+  `CURLOPT_SSL_VERIFYPEER => 1`. O `\curl::resetopt()` deixa a verificação da cadeia
+  **desligada** (`VERIFYPEER = 0`); só o nome do host é conferido (`VERIFYHOST = 2`), então um
+  certificado autoassinado com o nome certo é aceito por quem está no caminho da rede.
+  `\core\http_client` (Guzzle) verifica por padrão e não tem esse problema. Categoria:
+  `confidential_info_leakage`; `medium` com credencial que vale dinheiro ou acesso, `low` sem
+  credencial. *(Caso de referência: `local_aihub` 2026-10-09.)*
 - **L3-RACE-1** — Operação que concede recompensa, executa troca ou consome item limitado
   precisa de lock (`\core\lock\lock_config`) **e** revalidação de limite/cooldown dentro do
   lock. Sem isso, duplo-clique vira duplicação de item. Categoria: `data_loss`.
@@ -282,6 +312,51 @@ Não nomeadas pelas camadas acima, mas reais nestes plugins (o relatório públi
   regra só é aplicável na Fase C (varredura semântica), nunca na triagem do PHPStan.
 
 ---
+
+### Padrões do core que mudam a severidade (verificados no código do core)
+
+Antes de afirmar que uma proteção do core está **desligada** ou **ligada**, confira aqui ou no
+código (`lib/filelib.php`, `lib/classes/files/curl_security_helper.php`,
+`admin/settings/security.php`). Verificado em 2026-10-09 contra 4.5, 5.1 e 5.3.
+
+- **`\curl` (`lib/filelib.php`, `resetopt()`):** `CURLOPT_SSL_VERIFYPEER = 0`,
+  `CURLOPT_SSL_VERIFYHOST = 2`, `CURLOPT_FOLLOWLOCATION = 1`, `CURLOPT_MAXREDIRS = 10`. O
+  redirect é emulado em PHP: cada salto passa pelo helper de segurança. Ao mudar de host, o
+  core só remove o cabeçalho `Authorization:` que veio na **opção** `CURLOPT_HTTPHEADER`;
+  cabeçalhos definidos com `setHeader()` e qualquer outro cabeçalho de chave
+  (`x-goog-api-key`, `x-api-key`) **seguem** para o host do redirect, junto com o corpo do
+  POST. Ou seja, redirect seguido com `setHeader()` entrega a credencial ao outro host
+  (`lib/filelib.php`, laço de redirect, `$isdifferenthost`). Opções passadas na chamada
+  (`$curl->post($url, $body, $options)`) sobrescrevem as do objeto, inclusive o
+  `CURLOPT_RESOLVE` que o core define.
+- **`curl_security_helper`:** **ligado por padrão.** A instalação grava
+  `curlsecurityblockedhosts` = `127.0.0.0/8`, `192.168.0.0/16`, `10.0.0.0/8`,
+  `172.16.0.0/12`, `0.0.0.0`, `localhost`, `169.254.169.254`, `0000::1` e
+  `curlsecurityallowedport` = `443`, `80`. Host que não resolve é **bloqueado**; os IPv4
+  resolvidos são fixados com `CURLOPT_RESOLVE`. Fica de fora da lista padrão: `100.64.0.0/10`,
+  IPv6 ULA (`fc00::/7`) e link-local (`fe80::/10`) e o resto de `169.254.0.0/16`. Só fica
+  desligado se o admin esvaziar as duas listas.
+- **`\core\http_client` (Guzzle):** verifica TLS por padrão e aplica o mesmo helper a cada
+  redirect.
+- **`PARAM_URL`:** rejeita IPv6 literal entre colchetes e as formas decimal, hexadecimal,
+  octal e abreviada de IPv4 (`2130706433`, `0x7f000001`, `0177.0.0.1`, `127.1`). Um validador
+  que só é alcançável depois de `PARAM_URL` herda essa proteção, mas uma função de segurança
+  deve estar certa por si só — o defeito existe (`low`), a exploração depende de outro caminho.
+- **PHP `filter_var(..., FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)` (PHP 8.2):**
+  **aprova** `::ffff:127.0.0.1`, `::7f00:1`, `64:ff9b::7f00:1`, `100.64.0.1`,
+  `100.100.100.200`, `192.0.0.1` e `198.18.0.1`.
+- **Rate limit do `core_ai`:** por provider, por usuário e global por hora, **desligado** por
+  padrão, checado em `process_base` — vale para qualquer consumidor do Manager, não para
+  chamadas que não passam pelo `core_ai`.
+
+### Validadores de URL são executados, não só lidos
+
+A checagem determinística executa, dentro do container, todo método do plugin que recebe uma
+URL e mora num arquivo com validação de IP, contra uma lista de entradas de bypass, e reporta
+as que forem aceitas. Na verificação, trate a lista como fato (o método aceitou aquela
+entrada) e julgue só a exploração: se a entrada chega ao método por algum caminho real e se o
+core barra depois. A existência de um teste (`test_..._blocks_dns_rebinding`) não prova que o
+validador está certo.
 
 ## Camada 4 — Qualidade, conformidade e boas práticas
 

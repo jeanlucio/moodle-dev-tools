@@ -39,6 +39,7 @@ from datetime import date
 from pathlib import Path
 
 from audit_static_checks import run_static_checks
+from audit_url_probe import check_url_validators
 from claude_cli import (
     Clock, ProgressWriter, Uncached, cache_path, cached, call_claude, extract_json,
     fmt_duration, hash_key, run_parallel, usage,
@@ -78,7 +79,9 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 #     new Layer 4 rules (L4-BUG-1, L4-VER-*, L4-ROB-6, L4-HYG-7..9, L4-PRIV-2, L4-BP-5).
 # v6: --with-tests; scan and quality verification told which rules apply inside tests/.
 # v7: prompts and catalog reworded as this tool's own methodology (no outside references).
-PROMPT_VERSION = '7'
+# v8: L3-SSRF-1 rewritten (validated destination = contacted one), L3-TLS-1, core defaults
+#     sheet, URL validators executed in Phase A.
+PROMPT_VERSION = '8'
 
 CLAUDE_TIMEOUT = 900
 
@@ -1286,7 +1289,10 @@ templates, AMD...).",
 
 De 3 a 8 itens em "strengths", só o que você realmente verificou no código (escopo por
 instância, sesskey, locks, validação de URL, allow-list em ORDER BY, privacy provider,
-backup/restore, testes...). Se não verificou, não liste.
+backup/restore, testes...). Se não verificou, não liste. Não liste como ponto forte uma
+defesa que o catálogo diz ser insuficiente sozinha: validação de URL só conta se o destino
+validado for o contatado (L3-SSRF-1 — sem redirect, IP fixado, falha fechada), e a existência
+de um teste não prova que a defesa está certa.
 
 Dados da auditoria:
 """
@@ -1434,6 +1440,10 @@ def main():
         clock.done(f'{len(phpstan_msgs)} mensagem(ns) após filtro de ruído')
     static_candidates = run_static_checks(plugin_dir, scan_files, version)
     print(f'  {len(static_candidates)} candidato(s) das checagens determinísticas')
+    probe_candidates, probe_notes = check_url_validators(plugin_dir, scan_files)
+    for note in probe_notes:
+        print(f'  validador executado: {note}')
+    static_candidates += probe_candidates
     libs = check_thirdparty_libs(plugin_dir)
     if libs:
         print(f'  {len(libs)} biblioteca(s) de terceiro empacotada(s)')

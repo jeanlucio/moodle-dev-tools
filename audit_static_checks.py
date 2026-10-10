@@ -729,13 +729,92 @@ def check_capability_context(plugin_dir, scan_files):
     }, locations, 'Capabilities envolvidas: ' + ', '.join(sorted(names)) + '.')]
 
 
+CURL_NEW_RE = re.compile(r'\bnew\s+\\?curl\s*\(')
+CREDENTIAL_RE = re.compile(
+    r"Authorization\s*:|Bearer\s|x-(?:goog-)?api-key\s*:|['\"](?:api_?key|access_token)['\"]\s*=>",
+    re.I)
+VERIFYPEER_ON_RE = re.compile(r"CURLOPT_SSL_VERIFYPEER['\"]?\s*(?:=>|,)\s*(?:1|true)\b", re.I)
+FOLLOW_OFF_RE = re.compile(r"CURLOPT_FOLLOWLOCATION['\"]?\s*(?:=>|,)\s*(?:0|false)\b", re.I)
+RESOLVE_RE = re.compile(r'CURLOPT_RESOLVE')
+# Signs that the code treats the destination as untrusted: it filters IP ranges or resolves
+# the host itself. A fixed provider URL needs none of this, so these files are the ones where
+# the destination can be influenced and the connection must stay on what was validated.
+URL_VALIDATION_RE = re.compile(
+    r'FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE|'
+    r'\bdns_get_record\s*\(|\bgethostbynamel?\s*\(')
+
+
+def _without_comment_lines(content):
+    """The content minus whole-line comments, so an option only mentioned in one is not taken
+    for an option that is set. Same convention as _grep()."""
+    return '\n'.join(line for line in content.splitlines()
+                     if not line.lstrip().startswith(('//', '*', '#', '/*')))
+
+
+def check_curl_transport(plugin_dir, scan_files):
+    """L3-TLS-1 and L3-SSRF-1: what core's \\curl defaults leave open, per file that builds one.
+
+    Core's \\curl ships with peer verification off and follows up to ten redirects, so the
+    options have to be set where the request is made. The check is per file because the
+    options and the `new \\curl()` live together in practice; Phase D reads the call chain
+    when they do not.
+    """
+    tls, ssrf, gaps = [], [], set()
+    for rel in _production_php(scan_files):
+        content = _without_comment_lines(_read(plugin_dir / rel))
+        builds = _grep(plugin_dir, [rel], CURL_NEW_RE)
+        if not builds:
+            continue
+        if CREDENTIAL_RE.search(content) and not VERIFYPEER_ON_RE.search(content):
+            tls.extend(builds)
+        if URL_VALIDATION_RE.search(content):
+            missing = []
+            if not FOLLOW_OFF_RE.search(content):
+                missing.append('não desliga o redirect (CURLOPT_FOLLOWLOCATION => 0)')
+            if not RESOLVE_RE.search(content):
+                missing.append('não fixa a conexão nos IPs validados (CURLOPT_RESOLVE)')
+            if missing:
+                ssrf.extend(builds)
+                gaps.update(missing)
+
+    findings = []
+    if tls:
+        findings.append(_finding({
+            'title': 'Requisição com credencial sem verificar o certificado do servidor',
+            'finding_type': 'security', 'severity': 'medium',
+            'category': 'confidential_info_leakage', 'rule_id': 'L3-TLS-1',
+            'description': 'O arquivo cria um \\curl do core e envia credencial (Authorization, '
+                           'Bearer ou cabeçalho de chave de API), mas não liga '
+                           'CURLOPT_SSL_VERIFYPEER. O \\curl::resetopt() deixa a verificação da '
+                           'cadeia desligada, então quem está no caminho da rede apresenta um '
+                           'certificado autoassinado com o nome certo e recebe a credencial.',
+            'recommendation': "Passar 'CURLOPT_SSL_VERIFYPEER' => 1 (e 'CURLOPT_SSL_VERIFYHOST' "
+                              '=> 2) nas opções da requisição, ou usar \\core\\http_client.',
+        }, tls))
+    if ssrf:
+        findings.append(_finding({
+            'title': 'Destino validado não é o destino contatado',
+            'finding_type': 'security', 'severity': 'medium',
+            'category': 'unauthorised_access', 'rule_id': 'L3-SSRF-1',
+            'description': 'O arquivo valida o destino (filtro de faixas de IP ou resolução de '
+                           'DNS própria) e depois faz a requisição com o \\curl do core, que '
+                           'segue redirect e resolve o DNS de novo ao conectar. A validação vale '
+                           'para a URL, não para a conexão.',
+            'recommendation': "Passar 'CURLOPT_FOLLOWLOCATION' => 0 e 'CURLOPT_RESOLVE' com os "
+                              'IPs que a validação aprovou. Julgar a severidade pela ficha '
+                              '"Padrões do core" do catálogo (helper de segurança ligado por '
+                              'padrão).',
+        }, ssrf, 'Lacunas: ' + '; '.join(sorted(gaps)) + '.'))
+    return findings
+
+
 CHECKS = [
     check_junk_files, check_logstore, check_raw_http, check_raw_download, check_unserialize,
     check_ddl_outside_upgrade, check_core_table_writes, check_implicit_nullable,
     check_debug_leftovers, check_mod_form_validation, check_lib_define_guard,
     check_ci_disabled, check_superglobals, check_gpl_header, check_behat_in_production,
     check_remote_resources, check_bundled_without_thirdpartylibs,
-    check_capability_context,
+    check_capability_context, check_curl_transport,
 ]
 
 
