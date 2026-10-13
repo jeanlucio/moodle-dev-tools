@@ -674,6 +674,46 @@ e acrescenta a entrada se estiver ausente. Isso não é conveniência: um relat�
 linha e prova de conceito
 de vulnerabilidade não pode virar arquivo versionado num repositório público.
 
+### Plugins grandes: escopo, grupos e cota esgotada
+
+A varredura (Fase C) é ~95% do consumo. Um plugin de ~50 mil linhas não cabe mais numa janela
+de cota, então a leitura pode ser reduzida e dividida:
+
+```bash
+moodle-security-audit blocks/playerhud --list-groups          # grupos, arquivos e linhas
+moodle-security-audit blocks/playerhud --only A               # só o grupo A
+moodle-security-audit blocks/playerhud --only B classes/ai/   # grupos e caminhos misturados
+moodle-security-audit blocks/playerhud --since v1.10.0        # só o que mudou desde a tag
+```
+
+`--since REF` lê os arquivos alterados desde `REF`, inclusive o que ainda não foi commitado, e
+`--only` aceita nomes de grupo ou caminhos. Os dois se combinam (interseção). O PHPStan e as
+checagens de padrão também ficam restritos ao escopo, e o relatório declara o **escopo
+parcial** ao lado da nota: ela vale só para os arquivos lidos.
+
+A configuração fica em **`<plugin>/.plans/security-audit/config.json`**, na pasta que já é
+gitignorada em todo plugin — portanto nunca vai no zip do Plugin Directory:
+
+```json
+{
+  "ignore": ["cli/seed*.php", "styles.css"],
+  "groups": {"A": ["*.php", "classes/controller/"], "B": ["classes/external/"], "C": ["classes/"]}
+}
+```
+
+- `ignore`: arquivos que nunca são lidos (scripts de seed de desenvolvimento, CSS).
+- `groups`: um arquivo pertence ao **primeiro** grupo que o casa, então o "pega-tudo" (`classes/`)
+  vai por último. Um padrão sem `/` casa só arquivos da raiz (`*.php`); com `/` final, tudo abaixo
+  da pasta; com `/` no meio, o caminho ou um glob. `--list-groups` mostra os arquivos sem grupo.
+
+**Cota esgotada.** Quando os dois modelos recusam por limite de gasto ou de sessão, a ferramenta
+para de chamar a CLI (as chamadas seguintes falham na hora), não gera a narrativa e marca o
+relatório como **`Inconclusiva`**, sem nota: lotes não lidos e candidatos sem verificação
+aparecem em seção própria ("Candidatos sem verificação" — nunca como "descartados"), e o
+processo sai com código **2**. Os lotes e verificações concluídos ficam em cache, então a rodada
+seguinte, depois que a cota renovar, paga só o que faltou. Antes disso, uma cota esgotada
+produzia um relatório "A+, nenhum achado" indistinguível de um plugin limpo.
+
 ### Pipeline
 
 | Fase | O que faz |
