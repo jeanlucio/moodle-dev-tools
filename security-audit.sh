@@ -19,8 +19,13 @@
 #   --phpstan-level N    : nível do PHPStan 0..9 (padrão 6). Alto de propósito: a triagem
 #                          por IA é o que torna nível alto utilizável em Moodle.
 #   --no-phpstan         : pula a fase A (PHPStan + triagem) inteiramente.
-#   --batch-lines N      : orçamento de linhas por lote de varredura (padrão 3500).
-#   --jobs N             : chamadas de IA em paralelo (padrão 3).
+#   --batch-lines N      : orçamento de linhas por lote de varredura (padrão 10000).
+#   --jobs N             : chamadas de IA em paralelo (padrão 5).
+#   --only G [G...]      : lê só estes grupos (de <plugin>/.plans/security-audit/config.json)
+#                          ou caminhos. Informe o plugin ANTES: ... blocks/playerhud --only A B
+#   --since REF          : lê só os arquivos alterados desde esta tag/branch/commit
+#                          (inclui o que não foi commitado). Combina com --only.
+#   --list-groups        : mostra os grupos do plugin com arquivos e linhas, e sai.
 #   --with-moodlecheck   : roda também o local_moodlecheck (PHPDoc; release, não segurança).
 #   --no-verify          : pula o passe de verificação (mais rápido, mais falso positivo).
 #   --with-tests         : lê também a pasta tests/ a fundo. Fica de fora por padrão porque
@@ -51,11 +56,16 @@ PLUGIN=""
 PASSTHRU=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --model|--fallback-model|--phpstan-level|--batch-lines|--jobs|--from-json)
+ --model|--fallback-model|--phpstan-level|--batch-lines|--jobs|--from-json|--since)
             PASSTHRU+=("$1" "${2:?$1 exige um valor}"); shift 2 ;;
-        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests)
+        --only)
+            # Group names or paths, up to the next option. The plugin goes BEFORE --only.
+            PASSTHRU+=("$1"); shift
+            [ $# -gt 0 ] && [[ "$1" != -* ]] || { echo "erro: --only exige grupo(s) ou caminho(s)" >&2; exit 1; }
+            while [ $# -gt 0 ] && [[ "$1" != -* ]]; do PASSTHRU+=("$1"); shift; done ;;
+        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests|--list-groups)
             PASSTHRU+=("$1"); shift ;;
-        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;
         *) [ -n "$PLUGIN" ] && { echo "erro: informe um plugin só" >&2; exit 1; }; PLUGIN="$1"; shift ;;
     esac
