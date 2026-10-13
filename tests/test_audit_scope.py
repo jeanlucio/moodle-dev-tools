@@ -86,6 +86,20 @@ class GroupsTest(unittest.TestCase):
         self.assertEqual([e['rel'] for e in PLUGIN if e in picked], [e['rel'] for e in picked])
 
 
+class TestsGroupTest(unittest.TestCase):
+    GROUPS = {'A': ['*.php'], 'T': ['tests/external/', 'tests/']}
+
+    def test_naming_a_tests_group_or_path_asks_for_tests(self):
+        self.assertTrue(scope.targets_tests(['T'], self.GROUPS))
+        self.assertTrue(scope.targets_tests(['tests/output/'], self.GROUPS))
+        self.assertTrue(scope.targets_tests(['A', 'T'], self.GROUPS))
+
+    def test_other_selections_do_not_read_tests(self):
+        self.assertFalse(scope.targets_tests(['A'], self.GROUPS))
+        self.assertFalse(scope.targets_tests(['classes/'], self.GROUPS))
+        self.assertFalse(scope.targets_tests(None, self.GROUPS))
+
+
 class ConfigTest(unittest.TestCase):
     def test_a_missing_file_means_no_ignores_and_no_groups(self):
         with tempfile.TemporaryDirectory() as tmp:

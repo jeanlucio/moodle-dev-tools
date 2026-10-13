@@ -105,6 +105,15 @@ def changed_since(plugin_dir, ref):
     return changed
 
 
+def targets_tests(selectors, groups, tests_dir='tests'):
+    """Does `--only` name something under tests/? Those files are not read unless asked for."""
+    for selector in selectors or []:
+        patterns = groups.get(selector, [selector])
+        if any(p == tests_dir or p.startswith(tests_dir + '/') for p in patterns):
+            return True
+    return False
+
+
 def select_since(scan, changed):
     return [e for e in scan if e['rel'] in changed]
 

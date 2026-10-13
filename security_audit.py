@@ -1482,12 +1482,17 @@ def main():
     franken = version.get('component') or plugin_dir.name
     use_cache = not args.no_cache
 
-    scan_files, metadata_only = collect_files(plugin_dir, include_tests=args.with_tests)
     try:
         config = audit_scope.load_config(plugin_dir)
     except ValueError as exc:
         print(f'erro: {exc}', file=sys.stderr)
         return 1
+    # Naming a tests/ group or path in --only is itself the request to read tests/.
+    # --list-groups shows every group, so it counts the tests groups too.
+    named = list(config['groups']) if args.list_groups else args.only
+    with_tests = args.with_tests or audit_scope.targets_tests(
+        named, config['groups'], TESTS_DIR)
+    scan_files, metadata_only = collect_files(plugin_dir, include_tests=with_tests)
     scan_files, ignored_files = audit_scope.apply_ignore(scan_files, config['ignore'])
     if not scan_files:
         print('erro: nenhum arquivo analisável encontrado', file=sys.stderr)
@@ -1498,7 +1503,7 @@ def main():
 
     # The attack-surface inventory describes the whole plugin even when the scan is narrowed.
     inventory = build_inventory(plugin_dir, scan_files, metadata_only)
-    inventory['tests_scanned'] = args.with_tests
+    inventory['tests_scanned'] = with_tests
 
     full_files = scan_files
     if args.only:
@@ -1529,8 +1534,8 @@ def main():
     if ignored_files:
         print(f'  fora da leitura (config.json): {len(ignored_files)} arquivos, '
               f'{inventory["ignored_lines"]} linhas')
-    if args.with_tests:
-        print('  tests/ incluída na leitura (--with-tests)')
+    if with_tests:
+        print('  tests/ incluída na leitura (--with-tests ou grupo de testes em --only)')
     else:
         skipped = [e for e in metadata_only if e['rel'].startswith(TESTS_DIR + '/')]
         if skipped:
