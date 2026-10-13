@@ -270,21 +270,81 @@ def _run_claude(prompt, cwd, model, system_prompt, allow_tools):
     return text
 
 
+# What the CLI says when the subscription is out of room, as opposed to a network blip or a
+# malformed reply: the monthly spend cap, the session window, or a model that needs credits.
+# "rate limit" is left out on purpose — it clears within a minute, so it must not end a run.
+QUOTA_PATTERN = re.compile(
+    r'spend limit|session limit|usage limit|usage credits|hit your', re.IGNORECASE)
+
+
+class QuotaExhausted(RuntimeError):
+    """Every model the call could use refused it because the quota is spent."""
+
+
+class QuotaState:
+    """Remembers that the quota ran out, so the rest of the run stops asking.
+
+    Without this, a run that hits the limit at the first batch still spawns one CLI process
+    per remaining call, each failing the same way, and then writes a report from the
+    nothing those calls returned.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._reason = ''
+
+    @property
+    def exhausted(self):
+        return bool(self._reason)
+
+    @property
+    def reason(self):
+        return self._reason
+
+    def mark(self, reason):
+        with self._lock:
+            self._reason = self._reason or reason
+
+    def reset(self):
+        with self._lock:
+            self._reason = ''
+
+
+quota = QuotaState()
+
+
+def is_quota_error(exc):
+    return bool(QUOTA_PATTERN.search(str(exc)))
+
+
 def call_claude(prompt, cwd, model, fallback_model, system_prompt='', allow_tools=True):
     """Run a call on `model`, falling back to `fallback_model` on ANY failure.
 
     The CLI's own --fallback-model only covers "overloaded or not available"; exhausted
     model credits surface as a plain failure, so the retry is handled here instead.
+
+    When both models refuse because the quota is spent, QuotaExhausted is raised and every
+    later call fails at once without starting the CLI.
     """
+    if quota.exhausted:
+        raise QuotaExhausted(quota.reason)
     try:
         return _run_claude(prompt, cwd, model, system_prompt, allow_tools)
     except Exception as first:
         if not fallback_model or fallback_model == model:
-            raise RuntimeError(f'{model}: {first}')
+            message = f'{model}: {first}'
+            if is_quota_error(first):
+                quota.mark(message)
+                raise QuotaExhausted(message)
+            raise RuntimeError(message)
         try:
             return _run_claude(prompt, cwd, fallback_model, system_prompt, allow_tools)
         except Exception as second:
-            raise RuntimeError(f'{model}: {first}; {fallback_model}: {second}')
+            message = f'{model}: {first}; {fallback_model}: {second}'
+            if is_quota_error(first) and is_quota_error(second):
+                quota.mark(message)
+                raise QuotaExhausted(message)
+            raise RuntimeError(message)
 
 
 # --------------------------------------------------------------------------- #

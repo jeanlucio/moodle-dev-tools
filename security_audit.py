@@ -38,11 +38,12 @@ import time
 from datetime import date
 from pathlib import Path
 
+import audit_scope
 from audit_static_checks import run_static_checks
 from audit_url_probe import check_url_validators
 from claude_cli import (
     Clock, ProgressWriter, Uncached, cache_path, cached, call_claude, extract_json,
-    fmt_duration, hash_key, run_parallel, usage,
+    fmt_duration, hash_key, quota, run_parallel, usage,
 )
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -489,7 +490,13 @@ def _batch_key(plugin_dir, batch):
 
 
 def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
-                 clock=None):
+                 clock=None, failures=None):
+    """Scan every batch; `failures`, when given, receives the batches that could not be read.
+
+    A failed batch contributes no candidates and is not cached, so the next run retries it.
+    The caller needs the count: a scan with failed batches has not looked at the whole plugin
+    and must not be graded as if it had.
+    """
     def run_batch(batch):
         def compute():
             listing = '\n'.join(f'- {e["rel"]} ({e["lines"]} linhas)' for e in batch)
@@ -499,6 +506,8 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
                 return findings if isinstance(findings, list) else []
             except Exception as exc:
                 print(f'  aviso: um lote falhou ({exc})', file=sys.stderr)
+                if failures is not None:
+                    failures.append(batch)
                 raise Uncached([])
 
         return cached(CACHE_DIR, franken, 'scan', _batch_key(plugin_dir, batch),
@@ -642,8 +651,9 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
                     raise ValueError(f'esperava um objeto JSON, recebeu {type(result).__name__}')
                 return result
             except Exception as exc:
-                # A failed verification must never silently promote an unverified candidate.
-                return {'verdict': 'refuted', 'reason': f'verificação falhou: {exc}'}
+                # A failed verification must never silently promote an unverified candidate,
+                # and must not pass for a refutation either: it is reported as unverified.
+                return {'verdict': 'unverified', 'reason': f'verificação falhou: {exc}'}
 
         # A failed verification is not cached: the next run should retry it, not inherit
         # a refusal caused by a spend limit or a network blip.
@@ -896,6 +906,41 @@ def severity_counts(findings):
     return counts
 
 
+INCONCLUSIVE_GRADE = 'Inconclusiva'
+
+
+def incomplete_reason(info):
+    """Why a run produced no grade, in one sentence for the report and the terminal."""
+    parts = []
+    if info.get('failed_batches'):
+        parts.append(f'{info["failed_batches"]} de {info["total_batches"]} lote(s) da varredura '
+                     'não foram lidos')
+    if info.get('unverified'):
+        parts.append(f'{info["unverified"]} candidato(s) ficaram sem verificação')
+    cause = ' (cota esgotada)' if info.get('quota') else ''
+    return ' e '.join(parts) + cause + '; nenhuma nota foi calculada'
+
+
+def print_groups(scan_files, ignored_files, config):
+    """--list-groups: how the plugin splits into the configured groups."""
+    total = sum(e['lines'] for e in scan_files)
+    print(f'{len(scan_files)} arquivos, {total} linhas na leitura'
+          + (f' ({len(ignored_files)} arquivos fora, {sum(e["lines"] for e in ignored_files)}'
+             ' linhas)' if ignored_files else ''))
+    if not config['groups']:
+        print('nenhum grupo configurado (crie ' + audit_scope.CONFIG_REL + ')')
+        return 0
+    assigned, unassigned = audit_scope.assign_groups(scan_files, config['groups'])
+    for name, entries in assigned.items():
+        print(f'  {name}: {len(entries)} arquivos, {sum(e["lines"] for e in entries)} linhas')
+    if unassigned:
+        print(f'  sem grupo: {len(unassigned)} arquivos, '
+              f'{sum(e["lines"] for e in unassigned)} linhas (não entram em nenhum --only de grupo)')
+        for entry in unassigned[:10]:
+            print(f'    {entry["rel"]}')
+    return 0
+
+
 def compute_grade(findings):
     """Grade dominated by the worst finding, not by a sum of penalties.
 
@@ -1086,6 +1131,14 @@ def render_report(ctx):
     add('')
     add(f'# {grade}')
     add('')
+    if ctx.get('scope_note'):
+        add(f'> **{ctx["scope_note"][0].upper()}{ctx["scope_note"][1:]}.** A nota vale só para esses'
+            ' arquivos, não para o plugin inteiro.')
+        add('')
+    if ctx.get('incomplete'):
+        add('> **Auditoria inconclusiva.** A tabela abaixo mostra só o que foi confirmado antes'
+            ' da interrupção; a ausência de achados não significa que o plugin esteja limpo.')
+        add('')
     if grade_reason:
         add(f'*{grade_reason}*')
         add('')
@@ -1236,6 +1289,19 @@ def render_report(ctx):
         for index, finding in enumerate(quality_findings, 1):
             _render_finding(add, index, finding)
 
+    # ---- Sem verificar ----------------------------------------------------
+    if ctx.get('unverified'):
+        add('## Candidatos sem verificação')
+        add('')
+        add('A varredura apontou estes candidatos, mas a verificação não rodou (cota esgotada ou'
+            ' falha de conexão). **Não foram descartados**: precisam ser verificados numa nova'
+            ' execução, que reaproveita o cache.')
+        add('')
+        for finding in ctx['unverified']:
+            add(f'- **{finding.get("title")}** (`{finding.get("file")}:'
+                f'{finding.get("line")}`, {finding.get("severity")})')
+        add('')
+
     # ---- Descartados ------------------------------------------------------
     if refuted:
         add('## Descartados na verificação')
@@ -1352,6 +1418,14 @@ def main():
     parser.add_argument('--no-verify', action='store_true')
     parser.add_argument('--with-tests', action='store_true',
                         help='lê também tests/ a fundo (custa mais cota)')
+    parser.add_argument('--only', nargs='+', metavar='GRUPO_OU_CAMINHO', default=None,
+                        help='lê só estes grupos (de .plans/security-audit/config.json) ou '
+                             'caminhos do plugin')
+    parser.add_argument('--since', metavar='REF', default=None,
+                        help='lê só os arquivos alterados desde esta tag, branch ou commit '
+                             '(inclui o que ainda não foi commitado)')
+    parser.add_argument('--list-groups', action='store_true',
+                        help='mostra os grupos do plugin com arquivos e linhas, e sai')
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--from-json', default=None,
@@ -1389,6 +1463,9 @@ def main():
         ctx['grade'], ctx['grade_reason'] = compute_grade(ctx['confirmed'])
         ctx['security_grade'], _ = compute_grade(
             [f for f in ctx['confirmed'] if f.get('finding_type') == 'security'])
+        if ctx.get('incomplete'):
+            ctx['grade'] = ctx['security_grade'] = INCONCLUSIVE_GRADE
+            ctx['grade_reason'] = incomplete_reason(ctx['incomplete'])
         if not ctx.get('narrative'):
             print('narrativa ausente no JSON — gerando (1 chamada)...')
             ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
@@ -1406,14 +1483,52 @@ def main():
     use_cache = not args.no_cache
 
     scan_files, metadata_only = collect_files(plugin_dir, include_tests=args.with_tests)
+    try:
+        config = audit_scope.load_config(plugin_dir)
+    except ValueError as exc:
+        print(f'erro: {exc}', file=sys.stderr)
+        return 1
+    scan_files, ignored_files = audit_scope.apply_ignore(scan_files, config['ignore'])
     if not scan_files:
         print('erro: nenhum arquivo analisável encontrado', file=sys.stderr)
         return 1
+
+    if args.list_groups:
+        return print_groups(scan_files, ignored_files, config)
+
+    # The attack-surface inventory describes the whole plugin even when the scan is narrowed.
     inventory = build_inventory(plugin_dir, scan_files, metadata_only)
     inventory['tests_scanned'] = args.with_tests
 
+    full_files = scan_files
+    if args.only:
+        scan_files = audit_scope.select_only(scan_files, args.only, config['groups'])
+    if args.since:
+        try:
+            changed = audit_scope.changed_since(plugin_dir, args.since)
+        except ValueError as exc:
+            print(f'erro: {exc}', file=sys.stderr)
+            return 1
+        scan_files = audit_scope.select_since(scan_files, changed)
+    partial = len(scan_files) != len(full_files)
+    if not scan_files:
+        print('nada a analisar neste escopo (nenhum arquivo analisável corresponde)')
+        return 0
+    inventory['files_scanned'] = len(scan_files)
+    inventory['lines_scanned'] = sum(e['lines'] for e in scan_files)
+    scope_note = (audit_scope.describe(args.only, args.since, full_files, scan_files)
+                  if partial else '')
+    if ignored_files:
+        inventory['ignored_files'] = len(ignored_files)
+        inventory['ignored_lines'] = sum(e['lines'] for e in ignored_files)
+
     print(f'Auditando {franken} — {inventory["files_scanned"]} arquivos, '
           f'{inventory["lines_scanned"]} linhas')
+    if scope_note:
+        print(f'  {scope_note}')
+    if ignored_files:
+        print(f'  fora da leitura (config.json): {len(ignored_files)} arquivos, '
+              f'{inventory["ignored_lines"]} linhas')
     if args.with_tests:
         print('  tests/ incluída na leitura (--with-tests)')
     else:
@@ -1437,6 +1552,11 @@ def main():
         phpstan_msgs, phpstan_err = run_phpstan(plugin_dir, args.phpstan_level)
         if phpstan_err:
             print(f'  aviso: {phpstan_err}', file=sys.stderr)
+        if partial:
+            # PHPStan always reads the whole plugin; only the messages from files in scope
+            # are triaged and verified, or the narrowed run would pay for the rest anyway.
+            in_scope = {e['rel'] for e in scan_files}
+            phpstan_msgs = [m for m in phpstan_msgs if m.get('file') in in_scope]
         clock.done(f'{len(phpstan_msgs)} mensagem(ns) após filtro de ruído')
     static_candidates = run_static_checks(plugin_dir, scan_files, version)
     print(f'  {len(static_candidates)} candidato(s) das checagens determinísticas')
@@ -1465,9 +1585,10 @@ def main():
     # Phase C
     batches = build_batches(scan_files, args.batch_lines)
     clock.phase('C', f'Varredura semântica em {len(batches)} lote(s)')
+    failed_batches = []
     all_candidates = scan_batches(batches, plugin_dir, franken, args.model,
                                   args.fallback_model, rules, args.jobs, use_cache,
-                                  clock=clock)
+                                  clock=clock, failures=failed_batches)
     scan_count = len(all_candidates)
     # Every source feeds the same verification: the AI scan, the static checks (Phase A)
     # and the PHPStan messages the triage judged real (Phase B).
@@ -1486,13 +1607,15 @@ def main():
                                      args.fallback_model, rules, args.jobs, use_cache,
                                      clock=clock)
         confirmed = [f for f in candidates if f.get('verdict') == 'confirmed']
-        refuted = [f for f in candidates if f.get('verdict') != 'confirmed']
-        clock.done(f'{len(confirmed)} confirmado(s), {len(refuted)} descartado(s)')
+        unverified = [f for f in candidates if f.get('verdict') == 'unverified']
+        refuted = [f for f in candidates if f.get('verdict') not in ('confirmed', 'unverified')]
+        clock.done(f'{len(confirmed)} confirmado(s), {len(refuted)} descartado(s)'
+                   + (f', {len(unverified)} SEM VERIFICAR' if unverified else ''))
     else:
-        confirmed, refuted = candidates, []
+        confirmed, refuted, unverified = candidates, [], []
 
     # Phase E
-    if len(confirmed) > 1:
+    if len(confirmed) > 1 and not quota.exhausted:
         clock.phase('E', f'Deduplicando {len(confirmed)} achado(s) confirmado(s)')
         before = len(confirmed)
         confirmed = dedupe_findings(confirmed, plugin_dir, franken, args.model,
@@ -1506,13 +1629,33 @@ def main():
         [f for f in confirmed if f.get('finding_type') == 'security'])
     ctx = {
         'franken': franken, 'version': version, 'inventory': inventory,
-        'confirmed': confirmed, 'refuted': refuted, 'phpstan': triaged,
+        'confirmed': confirmed, 'refuted': refuted, 'unverified': unverified,
+        'phpstan': triaged,
         'libs': libs, 'grade': grade, 'grade_reason': grade_reason,
-        'security_grade': security_grade,
+        'security_grade': security_grade, 'scope_note': scope_note,
     }
+    # A scan that skipped batches or left candidates unverified has not examined the plugin:
+    # grading it would turn "the quota ran out" into "no findings".
+    incomplete = bool(failed_batches or unverified)
+    if incomplete:
+        ctx['incomplete'] = {
+            'failed_batches': len(failed_batches), 'total_batches': len(batches),
+            'unverified': len(unverified), 'quota': quota.exhausted,
+            'reason': quota.reason,
+        }
+        ctx['grade'] = INCONCLUSIVE_GRADE
+        ctx['grade_reason'] = incomplete_reason(ctx['incomplete'])
+        ctx['security_grade'] = INCONCLUSIVE_GRADE
+        grade = INCONCLUSIVE_GRADE
+        grade_reason = ctx['grade_reason']
+        security_grade = INCONCLUSIVE_GRADE
     clock.phase('F', 'Gerando relatório')
-    ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
-                                          args.fallback_model, rules)
+    if quota.exhausted:
+        print('  cota esgotada: narrativa não gerada')
+        ctx['narrative'] = {}
+    else:
+        ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
+                                              args.fallback_model, rules)
 
     report_dir = ensure_report_dir(plugin_dir)
     # Includes the time, not just the date: two audits run the same day would otherwise
@@ -1539,6 +1682,12 @@ def main():
     for line in usage.summary_lines():
         print(line)
     clock.finish()
+    if incomplete:
+        print('')
+        print('AUDITORIA INCONCLUSIVA: ' + ctx['grade_reason'])
+        print('Os lotes e verificações concluídos ficaram em cache; rode de novo quando a cota '
+              'renovar para completar só o que faltou.')
+        return 2
     return 0
 
 
