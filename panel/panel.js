@@ -312,12 +312,20 @@ const progressLine = async (run) => {
     return `Fase ${progress.phase}: ${progress.description}${done}`;
 };
 
-const runCard = async (run) => {
+const LOG_TAIL_CHARS = 60000;
+const BOTTOM_SLACK_PX = 24;
+
+/** "criada ... · duração ..." for a run; the duration of a run in progress keeps counting. */
+const metaText = (run) => {
     const meta = [`criada ${formatDate(run.created)}`];
     if (run.started) {
         const end = run.finished || Date.now() / 1000;
         meta.push(`duração ${formatDuration(end - run.started)}`);
     }
+    return meta.join(' · ');
+};
+
+const runCard = async (run) => {
     const active = ['queued', 'running'].includes(run.status);
     const actions = [];
     if (active) {
@@ -333,11 +341,12 @@ const runCard = async (run) => {
         ? await loadLog(run) : '';
     const details = h('details', {},
         h('summary', {}, 'Saída'),
-        h('pre', {}, logText.slice(-6000) || '(vazia)'));
+        h('pre', {}, logText.slice(-LOG_TAIL_CHARS) || '(vazia)'));
     return h('div', {class: 'run'},
         h('div', {class: 'run-head'}, h('strong', {}, runTitle(run)),
             chip(STATUS_LABELS[run.status] || run.status, STATUS_TONE[run.status])),
-        h('div', {class: 'meta'}, meta.join(' · ')),
+        h('div', {class: 'meta', 'data-started': run.started, 'data-finished': run.finished},
+            metaText(run)),
         progress ? h('div', {class: 'progress'}, progress) : null,
         run.status === 'inconclusive'
             ? h('div', {class: 'meta'}, 'A cota acabou: o que foi lido ficou em cache, rode de novo depois.') : null,
@@ -345,7 +354,47 @@ const runCard = async (run) => {
         actions.length ? h('div', {class: 'row-actions'}, actions) : null);
 };
 
+/** Where the log box of each run is scrolled, so a rebuild of the cards does not throw it back up. */
+const captureScroll = () => {
+    const saved = new Map();
+    document.querySelectorAll('#runs .run').forEach((node) => {
+        const box = node.querySelector('details[open] pre');
+        saved.set(node.dataset.id, {
+            open: node.querySelector('details[open]') !== null,
+            top: box ? box.scrollTop : 0,
+            // Following the end of the log is the default; scrolling up to read stops it.
+            follow: box ? box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK_PX : true,
+        });
+    });
+    return saved;
+};
+
+const restoreScroll = (saved) => {
+    document.querySelectorAll('#runs .run').forEach((node) => {
+        const before = saved.get(node.dataset.id);
+        const box = node.querySelector('details[open] pre');
+        if (box) {
+            box.scrollTop = !before || before.follow ? box.scrollHeight : before.top;
+        }
+    });
+};
+
+let loadingRuns = false;
+
 const loadRuns = async () => {
+    // A slow answer must not pile polls up behind it.
+    if (loadingRuns) {
+        return;
+    }
+    loadingRuns = true;
+    try {
+        await refreshRuns();
+    } finally {
+        loadingRuns = false;
+    }
+};
+
+const refreshRuns = async () => {
     const runs = await api('/api/runs');
     const active = runs.filter((run) => run.status === 'running');
     const queued = runs.filter((run) => run.status === 'queued');
@@ -356,19 +405,29 @@ const loadRuns = async () => {
         $('runs').replaceChildren(h('p', {class: 'hint'}, 'Nenhuma execução ainda.'));
         return;
     }
-    const open = new Set([...document.querySelectorAll('#runs details[open]')]
-        .map((node) => node.closest('.run').dataset.id));
     const cards = await Promise.all(runs.map(runCard));
+    // Read the scroll only now, after the requests: the user may have moved while they ran.
+    const saved = captureScroll();
     cards.forEach((card, index) => {
         card.dataset.id = runs[index].id;
-        if (open.has(runs[index].id)) {
-            const details = card.querySelector('details');
-            if (details) {
-                details.open = true;
-            }
+        const details = card.querySelector('details');
+        if (details && saved.get(runs[index].id)?.open) {
+            details.open = true;
         }
     });
     $('runs').replaceChildren(...cards);
+    restoreScroll(saved);
+};
+
+/** Keeps the duration of running runs ticking every second, independent of the polling. */
+const tickDurations = () => {
+    document.querySelectorAll('#runs .meta[data-started]').forEach((node) => {
+        const started = Number(node.dataset.started);
+        if (!started || node.dataset.finished) {
+            return;
+        }
+        node.textContent = node.textContent.replace(/duração .*$/, `duração ${formatDuration(Date.now() / 1000 - started)}`);
+    });
 };
 
 const cancelRun = async (id) => {
@@ -532,3 +591,4 @@ $('groups-close').addEventListener('click', () => $('groups-dialog').close());
 loadPlugins().catch(fail);
 loadRuns().catch(fail);
 setInterval(() => loadRuns().catch(fail), POLL_MS);
+setInterval(tickDurations, 1000);
