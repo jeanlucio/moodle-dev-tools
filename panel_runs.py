@@ -87,7 +87,8 @@ def validate(payload, public=None):
 
 def build_argv(options):
     """The argument list of an audit for validated options (no shell, no free text)."""
-    argv = [audit_command(), options['plugin'], '--focus', options['focus']]
+    # --json keeps the report's data next to it, so it can be re-rendered later without a new audit.
+    argv = [audit_command(), options['plugin'], '--focus', options['focus'], '--json']
     if options['only']:
         argv += ['--only', *options['only']]
     if options['since']:

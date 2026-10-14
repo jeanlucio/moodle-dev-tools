@@ -316,7 +316,7 @@ class ValidationTest(unittest.TestCase):
             argv = panel_runs.build_argv(self.check({
                 'focus': 'quality', 'only': ['A'], 'since': 'v1.0.0', 'with_tests': True,
                 'no_verify': True}))
-        self.assertEqual(['/x/audit', 'blocks/demo', '--focus', 'quality', '--only', 'A',
+        self.assertEqual(['/x/audit', 'blocks/demo', '--focus', 'quality', '--json', '--only', 'A',
                           '--since', 'v1.0.0', '--with-tests', '--no-verify'], argv)
 
 

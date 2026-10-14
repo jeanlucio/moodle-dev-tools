@@ -836,6 +836,23 @@ estão na faixa de 5 a 7 `low`, onde contagens idênticas tiveram A e B+ — por
 O modelo aditivo original (100 − penalidades) foi abandonado porque distorce o relatório: ele
 diz que oito falhas de higiene são piores que um XSS armazenado.
 
+### Idioma do relatório
+
+O relatório é em português do Brasil, inclusive o texto dos achados. Como o modelo lê código em
+inglês, alguns achados chegavam em inglês ao lado de um sumário em português. Há duas camadas:
+
+1. Todo prompt que escreve texto de achado (varredura, verificação, deduplicação, triagem) leva a regra
+   `IDIOMA` na frente: português do Brasil, mantendo em inglês só nomes de código, trechos, comandos e
+   termos técnicos sem tradução usual.
+2. Antes de montar o relatório, o que ainda parece inglês (detectado por palavras funcionais que só
+   existem em um dos idiomas, sem custo) é traduzido numa única chamada curta, em cache. Existe porque o
+   cache de varredura guarda respostas escritas antes da regra: sem isso, um lote já pago continuaria
+   em inglês. Se tudo já está em português, nenhuma chamada é feita; se a chamada falha, o texto fica
+   como estava. `--from-json` aplica a mesma tradução ao re-renderizar um relatório.
+
+Execuções disparadas pelo painel sempre passam `--json`, para o relatório poder ser re-renderizado depois
+sem nova auditoria.
+
 ### Foco da auditoria: segurança e qualidade
 
 A auditoria nasceu de segurança e passou a cobrir também qualidade, conformidade e boa prática. Os

@@ -39,6 +39,7 @@ from datetime import date
 from pathlib import Path
 
 import audit_focus
+import audit_language
 import audit_scope
 from audit_static_checks import run_static_checks
 from audit_url_probe import check_url_validators
@@ -375,7 +376,7 @@ def triage_phpstan(messages, plugin_dir, franken, model, fallback, rules, jobs, 
                 for i, m in enumerate(chunk)
             )
             try:
-                text = call_claude(TRIAGE_PROMPT + listing, plugin_dir, model,
+                text = call_claude(audit_language.ptbr(TRIAGE_PROMPT) + listing, plugin_dir, model,
                                    fallback, rules)
                 verdicts = extract_json(text)
             except Exception as exc:
@@ -509,7 +510,8 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
             listing = '\n'.join(f'- {e["rel"]} ({e["lines"]} linhas)' for e in batch)
             try:
                 prompt = audit_focus.scan_prompt(focus, SCAN_PROMPT)
-                text = call_claude(prompt + listing, plugin_dir, model, fallback, rules)
+                text = call_claude(audit_language.ptbr(prompt) + listing, plugin_dir, model,
+                                   fallback, rules)
                 findings = extract_json(text)
                 return findings if isinstance(findings, list) else []
             except Exception as exc:
@@ -533,10 +535,11 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
 #  Phase D — verification                                                      #
 # --------------------------------------------------------------------------- #
 
-# Bumped when the verification answer gains a field, so cached verdicts without it are redone.
+# Bumped when the verification answer changes (a new field, the language), so cached verdicts from
+# before are redone.
 # It is kept apart from PROMPT_VERSION on purpose: that one also keys the scan cache, which is
 # the expensive part of a run and does not change when only the verification prompt does.
-VERIFY_REVISION = 'sweep1'
+VERIFY_REVISION = 'sweep2-ptbr'
 
 VERIFY_PROMPT = """Verifique se este achado de segurança em um plugin Moodle é REAL e EXPLORÁVEL.
 
@@ -665,7 +668,7 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
         def compute():
             payload = json.dumps(finding, ensure_ascii=False, indent=2)
             try:
-                text = call_claude(prompt + payload, plugin_dir, model,
+                text = call_claude(audit_language.ptbr(prompt) + payload, plugin_dir, model,
                                    fallback, rules)
                 result = extract_json(text)
                 # extract_json() is shared with the phase C scan, which expects a JSON
@@ -784,7 +787,8 @@ def dedupe_findings(findings, plugin_dir, franken, model, fallback, rules, use_c
 
     def compute():
         try:
-            text = call_claude(DEDUP_PROMPT + payload, plugin_dir, model, fallback, rules)
+            text = call_claude(audit_language.ptbr(DEDUP_PROMPT) + payload, plugin_dir, model,
+                               fallback, rules)
             data = extract_json(text)
             groups = data.get('groups') if isinstance(data, dict) else None
             return groups if isinstance(groups, list) else []
@@ -1456,6 +1460,46 @@ def render_report(ctx):
     return '\n'.join(out)
 
 
+TRANSLATE_PROMPT = """Traduza para português do Brasil os campos de texto de cada item do array JSON
+abaixo, que estão em inglês. Mantenha em inglês e sem alteração: nomes de função, classe, arquivo,
+constante e coluna, trechos de código, comandos (grep e semelhantes), expressões regulares, URLs e
+tudo o que estiver entre crases. Mantenha a numeração e a formatação (listas "1) 2)", crases,
+quebras de linha). Não resuma e não acrescente nada.
+
+Responda APENAS com um array JSON, com o mesmo "id" e as mesmas chaves de cada item.
+
+Itens:
+"""
+TRANSLATE_BATCH = 6
+
+
+def translate_findings(findings, plugin_dir, franken, model, fallback, use_cache):
+    """Translate the finding fields that still read as English; returns how many fields changed.
+
+    The scan cache keeps answers written before the language rule, so this is the safety net: it
+    asks nothing when everything is already Portuguese, and a failure leaves the text as it was.
+    """
+    pending = audit_language.payload_for(findings)
+    changed = 0
+    for start in range(0, len(pending), TRANSLATE_BATCH):
+        payload = json.dumps(pending[start:start + TRANSLATE_BATCH], ensure_ascii=False, indent=2)
+
+        def compute(payload=payload):
+            try:
+                text = call_claude(TRANSLATE_PROMPT + payload, plugin_dir, model, fallback, '',
+                                   allow_tools=False)
+                data = extract_json(text)
+                return data if isinstance(data, list) else []
+            except Exception as exc:
+                print(f'  aviso: tradução falhou ({exc})', file=sys.stderr)
+                raise Uncached([])
+
+        result = cached(CACHE_DIR, franken, 'translate',
+                        hash_key(PROMPT_VERSION, 'translate', payload), use_cache, compute)
+        changed += audit_language.apply_translations(findings, result)
+    return changed
+
+
 NARRATIVE_PROMPT = """Escreva as seções narrativas do relatório de uma auditoria de plugin Moodle
 que cobre segurança, qualidade de código, conformidade (Privacy API) e boas práticas. Você
 pode ler o código para embasar o que afirmar — não invente nada.
@@ -1598,6 +1642,12 @@ def main():
         if ctx.get('incomplete'):
             ctx['grade'] = ctx['security_grade'] = INCONCLUSIVE_GRADE
             ctx['grade_reason'] = incomplete_reason(ctx['incomplete'])
+        waiting = sum(1 for f in ctx['confirmed'] if audit_language.needs_translation(f))
+        if waiting:
+            print(f'traduzindo {waiting} achado(s) que estão em inglês no JSON...')
+            translate_findings(ctx['confirmed'], plugin_dir, ctx.get('franken', plugin_dir.name),
+                               args.model, args.fallback_model, True)
+            source.write_text(json.dumps(ctx, ensure_ascii=False, indent=2), encoding='utf-8')
         if not ctx.get('narrative'):
             print('narrativa ausente no JSON — gerando (1 chamada)...')
             ctx['narrative'] = generate_narrative(ctx, plugin_dir, args.model,
@@ -1774,6 +1824,12 @@ def main():
         clock.done(f'{before - len(confirmed)} duplicata(s) consolidada(s)')
 
     # Phase F
+    if confirmed and not quota.exhausted:
+        waiting = sum(1 for f in confirmed if audit_language.needs_translation(f))
+        if waiting:
+            print(f'  traduzindo {waiting} achado(s) que vieram em inglês...')
+            translate_findings(confirmed, plugin_dir, franken, args.model, args.fallback_model,
+                               use_cache)
     confirmed = attach_snippets(confirmed, plugin_dir)
     grade, grade_reason, security_grade = focus_grades(confirmed, args.focus)
     ctx = {
