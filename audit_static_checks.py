@@ -17,6 +17,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import static_schema
+
 # Release branching versions, used to turn $plugin->requires into "Moodle X.Y". Taken from
 # each release tag's version.php; a requires newer than the last entry is simply not checked.
 MOODLE_RELEASES = [
@@ -35,6 +37,7 @@ CORE_TABLES = (
     'course_sections', 'grade_items', 'grade_grades', 'groups', 'groups_members',
     'groupings', 'groupings_groups', 'role_assignments', 'user_enrolments', 'enrol',
     'context', 'files', 'config', 'config_plugins', 'event', 'tag_instance',
+    'block_instances', 'block_positions',
 )
 DB_WRITE_RE = re.compile(
     r"\$DB->(insert_record|insert_records|update_record|delete_records(?:_select|_list)?|"
@@ -808,8 +811,23 @@ def check_curl_transport(plugin_dir, scan_files):
     return findings
 
 
+def check_schema(plugin_dir, scan_files):
+    """The checks of static_schema (backup, deletion, column lengths, preferences, randomness)."""
+    findings = []
+    for name, check in static_schema.CHECKS.items():
+        groups = {}
+        for violation in check(plugin_dir):
+            groups.setdefault(static_schema.spec_key(name, violation), []).append(violation)
+        for key, violations in groups.items():
+            lines = [static_schema.describe(name, v) for v in violations[:30]]
+            findings.append(_finding(
+                static_schema.SPECS[key], [(v['file'], v['line']) for v in violations],
+                'Ocorrências:\n' + '\n'.join(f'- {line}' for line in lines)))
+    return findings
+
+
 CHECKS = [
-    check_junk_files, check_logstore, check_raw_http, check_raw_download, check_unserialize,
+    check_schema, check_junk_files, check_logstore, check_raw_http, check_raw_download, check_unserialize,
     check_ddl_outside_upgrade, check_core_table_writes, check_implicit_nullable,
     check_debug_leftovers, check_mod_form_validation, check_lib_define_guard,
     check_ci_disabled, check_superglobals, check_gpl_header, check_behat_in_production,

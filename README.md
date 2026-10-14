@@ -477,6 +477,7 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 ├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos containers configurados + check de schema)
 ├── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
 ├── moodle-scope-audit      ← symlink → scope-audit.sh (§6 do SCOPE.md vs disco)
+├── moodle-static-checks    ← symlink → static-checks.sh (schema x código, custo zero)
 └── moodle-security-audit   ← symlink → security-audit.sh (auditoria de segurança e qualidade, determinística + IA)
 
 ~/.moodle-dev-tools/
@@ -777,6 +778,9 @@ contexto de sistema, biblioteca empacotada sem
 credencial enviada sem `CURLOPT_SSL_VERIFYPEER` (L3-TLS-1) e destino validado (filtro de IP
 ou DNS próprio) sem `CURLOPT_FOLLOWLOCATION => 0` e sem `CURLOPT_RESOLVE` (L3-SSRF-1).
 
+Além dessas, o audit roda as cinco checagens de `static_schema.py` (ver
+`moodle-static-checks` abaixo), que comparam o schema e as declarações do plugin com o código.
+
 ### Validadores de URL executados (`audit_url_probe.py`)
 
 Ler um validador não basta: o `is_safe_url()` do `local_aihub` v1.3.3 parecia certo linha a
@@ -913,6 +917,46 @@ Validador Mustache completo não está instalado (só existe no `moodle-plugin-c
 pre-commit faz o check leve de `@template` + chaves balanceadas.
 
 ---
+
+## Checagens de schema contra código — `moodle-static-checks`
+
+Cinco checagens determinísticas (sem IA, custo zero de cota) que comparam o que o plugin
+declara com o que o código faz. Saem de uma releitura dos 320 achados únicos de 136 relatórios
+de auditoria: são as famílias que uma regra decide sozinha.
+
+```bash
+moodle-static-checks <tipo/nome> [--check a,b] [--json] [--list]
+moodle-static-checks mod/reflect
+moodle-static-checks blocks/playerhud --check backup_columns,column_lengths
+```
+
+Sai com 1 quando acha algo, então também serve de portão. O `moodle-security-audit` roda as
+mesmas checagens e as inclui no relatório como candidatos.
+
+| Checagem | O que verifica | Regra |
+|---|---|---|
+| `backup_columns` | toda coluna do `install.xml` está no `backup_nested_element` da sua tabela (a chave do pai e o `course` da atividade não contam como dado; FK que o restore atribui sozinho também não), e toda tabela tem elemento de backup | L2-BAK-1 |
+| `delete_cleanup` | toda tabela que pertence a algo apagável (instância, curso, linha-pai do plugin) é citada em algum `delete_records*`/`DELETE` fora de privacidade, upgrade e testes; tabela chaveada por curso exige observer de `course_deleted` | L2-DEL-1, L2-DEL-2 |
+| `column_lengths` | campo de texto de formulário que casa com coluna `char(N)` tem `maxlength` ≤ N; `substr(..., 0, N)` com N de tamanho de coluna é sinalizado (usar `core_text::substr`) | L4-ROB-1, L4-BUG-1 |
+| `user_preferences` | todo `set_user_preference()` aparece no Privacy Provider (nome exato ou prefixo) | L4-PRIV-1 |
+| `weak_random` | `uniqid()`, `rand()` ou `mt_rand()` atribuído a token, código, segredo ou hash | L3-RAND-1 |
+
+**Exceções deliberadas** ficam em `<plugin>/.plans/security-audit/accepted.json`, com o motivo
+(entrada sem motivo é ignorada). A pasta é gitignored em todo plugin e nunca vai no ZIP:
+
+```json
+{
+  "backup_columns": {"block_x_ai_logs": "log de IA, não faz parte do curso"},
+  "delete_cleanup": {"local_x_log": "log de auditoria, sobrevive ao curso"},
+  "column_lengths": {"classes/y.php": "corte de caminho binário"}
+}
+```
+
+Limites conhecidos: uma tabela citada só como `FROM {tabela}` num SQL do backup conta como salva,
+mas suas colunas não são julgadas; uma tabela só é considerada limpa se algum `delete_records`
+cita o nome dela (não se prova que é chamado em `delete_instance`); o nome de campo de
+formulário é casado com colunas de mesmo nome do plugin inteiro, então um nome em tabelas de
+tamanhos diferentes é julgado contra o maior.
 
 ## Regressão de queries por teste — `moodle-query-baseline`
 
