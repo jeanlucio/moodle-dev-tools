@@ -1534,10 +1534,31 @@ Dados da auditoria:
 """
 
 
+# What the prose may claim depends on what the run looked at: a quality run says nothing about
+# security (the report header already says it was not evaluated), and a security run says
+# nothing about quality.
+NARRATIVE_FOCUS_RULE = {
+    'quality': """FOCO DESTA RODADA: qualidade de código, conformidade e boas práticas. A segurança
+NÃO foi avaliada. Não afirme, nem sugira, que não há achado de segurança ou que o plugin é
+seguro; não cite ausência de XSS, SQL injection, acesso indevido ou falha de isolamento. Não
+liste defesas de segurança em "strengths" nem na conclusão. Fale só do que esta rodada
+examinou e diga, em uma frase, que a segurança tem nota e rodada próprias.
+
+""",
+    'security': """FOCO DESTA RODADA: segurança. Qualidade de código, conformidade e boas práticas NÃO
+foram avaliadas. Não comente a qualidade do código nem afirme que ela está boa ou ruim; em
+"strengths" liste só defesas de segurança.
+
+""",
+}
+
+
 def generate_narrative(ctx, plugin_dir, model, fallback, rules):
     """Executive summary, methodology, strengths and conclusion — the prose sections."""
+    focus = ctx.get('focus', 'all')
     payload = json.dumps({
         'component': ctx['franken'],
+        'focus': focus,
         'inventory': ctx['inventory'],
         'findings': [{k: f.get(k) for k in ('title', 'finding_type', 'severity', 'category',
                                             'file')}
@@ -1546,7 +1567,8 @@ def generate_narrative(ctx, plugin_dir, model, fallback, rules):
         'security_grade': ctx.get('security_grade'),
     }, ensure_ascii=False, indent=2)
     try:
-        text = call_claude(NARRATIVE_PROMPT + payload, plugin_dir, model, fallback,
+        text = call_claude(NARRATIVE_FOCUS_RULE.get(focus, '') + NARRATIVE_PROMPT + payload,
+                           plugin_dir, model, fallback,
                            rules, allow_tools=True)
         data = extract_json(text)
         return data if isinstance(data, dict) else {}

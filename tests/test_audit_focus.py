@@ -198,5 +198,36 @@ class ReportFocusTest(unittest.TestCase):
         self.assertIn('1 achado(s) verificado(s) se mostraram de qualidade', report)
 
 
+class NarrativeFocusTest(unittest.TestCase):
+    """The prose must not talk about what the run did not evaluate."""
+
+    def prompt_sent(self, focus_name):
+        sent = []
+        ctx = {'franken': 'block_x', 'inventory': {}, 'confirmed': [], 'grade': 'A',
+               'security_grade': None}
+        if focus_name is not None:
+            ctx['focus'] = focus_name
+        original = audit.call_claude
+        audit.call_claude = lambda prompt, *args, **kwargs: sent.append(prompt) or '{}'
+        try:
+            audit.generate_narrative(ctx, '.', 'm', 'f', '')
+        finally:
+            audit.call_claude = original
+        return sent[0]
+
+    def test_a_quality_run_is_told_security_was_not_evaluated(self):
+        prompt = self.prompt_sent('quality')
+        self.assertIn('A segurança\nNÃO foi avaliada', prompt)
+        self.assertIn('"focus": "quality"', prompt)
+
+    def test_a_security_run_is_told_not_to_judge_quality(self):
+        prompt = self.prompt_sent('security')
+        self.assertIn('Qualidade de código, conformidade e boas práticas NÃO', prompt)
+
+    def test_a_run_without_focus_keeps_the_original_prompt(self):
+        prompt = self.prompt_sent(None)
+        self.assertTrue(prompt.startswith(audit.NARRATIVE_PROMPT))
+
+
 if __name__ == '__main__':
     unittest.main()
