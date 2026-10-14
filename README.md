@@ -27,7 +27,7 @@ O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
 só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -43,6 +43,7 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
 | **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
 | **modern-js** | `amd/src/*.js` staged | Roda no ESLint do Moodle as regras `no-var`, `prefer-const`, `prefer-arrow-callback`, `prefer-template`, `eqeqeq` e `promise/prefer-await-to-then` e bloqueia só as violações em linhas que o commit **adiciona ou altera** (código antigo vizinho não bloqueia) | Sim (`SKIP_MODERN_JS=1` para uma edição consciente de código antigo) |
+| **static-checks** | `.php`/`.xml` staged, plugin com `version.php` | `moodle-static-checks` restrito ao commit: coluna do `install.xml` fora do backup, tabela que nada apaga, campo de formulário sem `maxlength` para a coluna, `substr()` cortando em tamanho de coluna, preferência fora do Privacy Provider, token com `uniqid()`/`rand()`. Violações de arquivo só aparecem se o arquivo está staged; as de schema só se o commit toca `db/`, `backup/`, `lib.php`, privacidade ou um arquivo de limpeza/observer | Não por padrão (só avisa); `MDT_STATIC_CHECKS_MODE=block` bloqueia, `SKIP_STATIC_CHECKS=1` ignora |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:

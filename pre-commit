@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + capability-strings + ESLint + Stylelint + lint Mustache +
+# Pre-commit: PHPCS + capability-strings + static-checks + ESLint + Stylelint + lint Mustache +
 # gherkinlint (gates determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só
 # roda se houver arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
@@ -176,6 +176,36 @@ if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$DUPTABLE_CHECKER" ]; then
         exit 1
     fi
     echo "duplicate-tables: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  static-checks — schema x código (moodle-static-checks): coluna do  #
+#  install.xml fora do backup, tabela que nada apaga, campo sem       #
+#  maxlength para a coluna, preferência fora do Privacy Provider,     #
+#  token com uniqid()/rand(). Só mostra o que diz respeito ao commit. #
+#  Começa como AVISO; MDT_STATIC_CHECKS_MODE=block passa a bloquear.  #
+#  Exceção deliberada: <plugin>/.plans/security-audit/accepted.json.  #
+# ------------------------------------------------------------------ #
+STATIC_CHECKER="$MDT_DIR/static_checks.py"
+if [ "${SKIP_STATIC_CHECKS}" = "1" ]; then
+    echo "static-checks ignorado (SKIP_STATIC_CHECKS=1)"
+elif [ -n "$ALL_STAGED" ] && [ -f version.php ] && [ -f "$STATIC_CHECKER" ]; then
+    echo "static-checks: verificando schema x código..."
+    # shellcheck disable=SC2086
+    python3 "$STATIC_CHECKER" "$(pwd)" --staged $ALL_STAGED
+    STATIC_STATUS=$?
+    if [ "$STATIC_STATUS" -eq 0 ]; then
+        echo "static-checks: OK"
+    elif [ "${MDT_STATIC_CHECKS_MODE:-warn}" = "block" ] && [ "$STATIC_STATUS" -eq 1 ]; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: schema x código (veja acima). Corrija, ou registre a"
+        echo "  exceção com o motivo em .plans/security-audit/accepted.json."
+        echo "--------------------------------------------------------------"
+        exit 1
+    else
+        echo "aviso (não bloqueia): static-checks acima. Corrija, ou registre a exceção"
+        echo "com o motivo em .plans/security-audit/accepted.json."
+    fi
 fi
 
 # ------------------------------------------------------------------ #
