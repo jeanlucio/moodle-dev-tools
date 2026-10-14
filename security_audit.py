@@ -1319,7 +1319,7 @@ def render_report(ctx):
         add(narrative['methodology'])
         add('')
 
-    add('**Superfície de ataque**')
+    add('**Inventário do plugin**' if ctx.get('focus') == 'quality' else '**Superfície de ataque**')
     add('')
     add('| Item | Quantidade |')
     add('|---|---|')
@@ -1540,9 +1540,12 @@ Dados da auditoria:
 NARRATIVE_FOCUS_RULE = {
     'quality': """FOCO DESTA RODADA: qualidade de código, conformidade e boas práticas. A segurança
 NÃO foi avaliada. Não afirme, nem sugira, que não há achado de segurança ou que o plugin é
-seguro; não cite ausência de XSS, SQL injection, acesso indevido ou falha de isolamento. Não
-liste defesas de segurança em "strengths" nem na conclusão. Fale só do que esta rodada
-examinou e diga, em uma frase, que a segurança tem nota e rodada próprias.
+seguro; não cite ausência de XSS, SQL injection, acesso indevido ou falha de isolamento. Onde
+o modelo abaixo pede "postura de segurança", descreva a postura de qualidade. Em "strengths"
+liste só boas práticas de qualidade e conformidade que você verificou (testes, estrutura e
+tipagem, backup/restore, Privacy API, i18n, tratamento de erros), nunca defesas de segurança
+como sesskey, escopo por instância ou validação de URL, nem na conclusão. Diga, em uma frase,
+que a segurança tem nota e rodada próprias.
 
 """,
     'security': """FOCO DESTA RODADA: segurança. Qualidade de código, conformidade e boas práticas NÃO

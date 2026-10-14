@@ -187,6 +187,13 @@ class ReportFocusTest(unittest.TestCase):
         self.assertIn('1 vulnerabilidade(s) apareceram durante a leitura', report)
         self.assertIn('| segurança |', report)
 
+    def test_a_quality_report_does_not_call_the_inventory_an_attack_surface(self):
+        quality = self.render('quality', [finding('code_quality')])
+        self.assertIn('**Inventário do plugin**', quality)
+        self.assertNotIn('Superfície de ataque', quality)
+        for name in ('security', 'all'):
+            self.assertIn('**Superfície de ataque**', self.render(name, []))
+
     def test_the_default_report_is_unchanged(self):
         report = self.render('all', [finding('code_quality', 'low')])
         self.assertNotIn('Foco:', report)
@@ -219,6 +226,7 @@ class NarrativeFocusTest(unittest.TestCase):
         prompt = self.prompt_sent('quality')
         self.assertIn('A segurança\nNÃO foi avaliada', prompt)
         self.assertIn('"focus": "quality"', prompt)
+        self.assertIn('nunca defesas de segurança', prompt)
 
     def test_a_security_run_is_told_not_to_judge_quality(self):
         prompt = self.prompt_sent('security')
