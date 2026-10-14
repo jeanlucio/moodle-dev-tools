@@ -24,7 +24,7 @@ BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 chmod +x "$(pwd)/coverage.sh" "$(pwd)/check-schema.sh" "$(pwd)/upgrade.sh" \
     "$(pwd)/phpstan.sh" "$(pwd)/scope-audit.sh" "$(pwd)/security-audit.sh" \
-    "$(pwd)/query-baseline.sh" "$(pwd)/static-checks.sh"
+    "$(pwd)/query-baseline.sh" "$(pwd)/static-checks.sh" "$(pwd)/panel.sh"
 ln -sf "$(pwd)/coverage.sh"       "$BIN_DIR/moodle-coverage"
 ln -sf "$(pwd)/check-schema.sh"   "$BIN_DIR/moodle-check-schema"
 ln -sf "$(pwd)/upgrade.sh"        "$BIN_DIR/moodle-upgrade"
@@ -33,6 +33,7 @@ ln -sf "$(pwd)/scope-audit.sh"    "$BIN_DIR/moodle-scope-audit"
 ln -sf "$(pwd)/security-audit.sh" "$BIN_DIR/moodle-security-audit"
 ln -sf "$(pwd)/query-baseline.sh" "$BIN_DIR/moodle-query-baseline"
 ln -sf "$(pwd)/static-checks.sh"   "$BIN_DIR/moodle-static-checks"
+ln -sf "$(pwd)/panel.sh"           "$BIN_DIR/moodle-panel"
 # moodle-mirror não é criado aqui — é específico da máquina/ecossistema (topologia fixa de
 # múltiplos containers) e vive em moodle-dev-tools-private. Symlink manual, se aplicável:
 #   ln -sf /path/to/moodle-dev-tools-private/mirror.sh "$HOME/.local/bin/moodle-mirror"

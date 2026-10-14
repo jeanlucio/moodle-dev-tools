@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="panel-token" content="__TOKEN__">
+  <title>Painel de auditoria</title>
+  <link rel="stylesheet" href="/panel.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Painel de auditoria</h1>
+    <div id="queue-status" class="queue-status" role="status" aria-live="polite"></div>
+    <button type="button" id="check-all" class="btn">Checar todos (determinístico)</button>
+  </header>
+
+  <main>
+    <section aria-labelledby="h-plugins">
+      <h2 id="h-plugins">Plugins</h2>
+      <p class="hint">A coluna <em>Checagens</em> roda o <code>moodle-static-checks</code> (sem IA, sem cota).
+        <em>Auditar</em> enfileira uma auditoria com IA: uma por vez, porque a cota é uma só.</p>
+      <div class="table-wrap">
+        <table id="plugins">
+          <thead>
+            <tr>
+              <th scope="col">Plugin</th>
+              <th scope="col">Versão</th>
+              <th scope="col">Última auditoria</th>
+              <th scope="col">Checagens</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-runs">
+      <h2 id="h-runs">Execuções</h2>
+      <div id="runs"><p class="hint">Nenhuma execução ainda.</p></div>
+    </section>
+  </main>
+
+  <dialog id="run-dialog" aria-labelledby="run-title">
+    <form id="run-form" method="dialog">
+      <h2 id="run-title">Auditar</h2>
+      <fieldset>
+        <legend>Foco</legend>
+        <label class="choice"><input type="radio" name="focus" value="security">
+          <span><strong>Segurança</strong><small>Só vulnerabilidades, com nota própria. Sem PHPStan.</small></span></label>
+        <label class="choice"><input type="radio" name="focus" value="quality">
+          <span><strong>Qualidade</strong><small>Qualidade, conformidade e boa prática. Por padrão lê só o que mudou desde a última tag.</small></span></label>
+        <label class="choice"><input type="radio" name="focus" value="all" checked>
+          <span><strong>Os dois</strong><small>Como antes: os quatro tipos juntos, uma nota só.</small></span></label>
+      </fieldset>
+      <fieldset id="groups-set">
+        <legend>Grupos</legend>
+        <div id="groups"></div>
+      </fieldset>
+      <fieldset id="scope-set">
+        <legend>Escopo</legend>
+        <label class="choice"><input type="radio" name="scope" value="default" checked>
+          <span><strong id="scope-default-label">Padrão</strong></span></label>
+        <label class="choice"><input type="radio" name="scope" value="since">
+          <span><strong>Só o que mudou desde</strong>
+            <select id="since" aria-label="Tag de referência"></select></span></label>
+        <label class="choice" id="full-choice" hidden><input type="radio" name="scope" value="full">
+          <span><strong>Plugin inteiro</strong><small>Ignora o filtro por tag do foco qualidade.</small></span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Opções</legend>
+        <label class="check"><input type="checkbox" id="with-tests"> Ler também a pasta tests/ (custa mais cota)</label>
+        <label class="check"><input type="checkbox" id="no-verify"> Pular a verificação (mais barato, mais falso positivo)</label>
+      </fieldset>
+      <p id="estimate" class="estimate" role="status" aria-live="polite">Calculando estimativa…</p>
+      <p id="run-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" id="run-cancel" class="btn">Cancelar</button>
+        <button type="submit" id="run-submit" class="btn primary">Enfileirar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="report-dialog" class="wide" aria-labelledby="report-title">
+    <div class="dialog-head">
+      <h2 id="report-title">Relatórios</h2>
+      <select id="report-select" aria-label="Relatório"></select>
+      <button type="button" id="report-close" class="btn">Fechar</button>
+    </div>
+    <article id="report-body" class="report"></article>
+  </dialog>
+
+  <dialog id="static-dialog" class="wide" aria-labelledby="static-title">
+    <div class="dialog-head">
+      <h2 id="static-title">Checagens</h2>
+      <button type="button" id="static-close" class="btn">Fechar</button>
+    </div>
+    <div id="static-body"></div>
+  </dialog>
+
+  <script src="/panel.js"></script>
+</body>
+</html>

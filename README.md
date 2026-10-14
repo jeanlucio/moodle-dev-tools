@@ -959,6 +959,48 @@ pre-commit faz o check leve de `@template` + chaves balanceadas.
 
 ---
 
+## Painel web — `moodle-panel`
+
+Uma página local para ver os plugins do ecossistema e disparar auditorias sem decorar os comandos.
+
+```bash
+moodle-panel [--port 8765]     # abre o servidor; deixe o terminal aberto
+```
+
+**Acesso.** O servidor escuta **só em `127.0.0.1`**. De outra máquina, encaminhe a porta: a aba
+**Portas** do VS Code (conectado por SSH) faz isso sozinha, ou `ssh -L 8765:127.0.0.1:8765 host`; depois
+abra `http://localhost:8765`. Não abre nada no firewall nem passa pelo Caddy.
+
+| Área | O que faz |
+|---|---|
+| **Plugins** | Lista os plugins próprios (repositório git com `version.php` cujo `origin` é do mesmo dono deste repositório, ou sem `origin`; terceiros clonados na árvore não entram). Mostra a última nota de cada foco e se as checagens determinísticas estão limpas. |
+| **Checar** / **Checar todos** | Roda o `moodle-static-checks`: sem IA, sem cota, em segundos. |
+| **Auditar** | Escolhe plugin, foco (segurança, qualidade ou os dois), grupos, escopo (padrão, desde uma tag ou plugin inteiro), testes e verificação. Mostra antes quantos arquivos, linhas e chamadas de IA a rodada lê. |
+| **Execuções** | Fila com andamento (lê o mesmo `.progress/` do `progress.html`), saída ao vivo, botão de cancelar e atalho para o relatório gerado. |
+| **Relatórios** | Abre os relatórios `.md` do plugin renderizados, em ordem de data. |
+
+**Uma execução por vez.** A cota do Claude é uma só, então as auditorias entram numa fila e a mais
+antiga começa quando nada está rodando. Cada execução é um arquivo em `.panel/runs/` e roda num
+processo à parte (`panel_runner.py`): **continua se o painel parar**, e o painel a reencontra pelos
+arquivos. Uma execução que sumiu sem registrar o fim é marcada como *perdida*. O código de saída 2 do
+`moodle-security-audit` (cota esgotada) aparece como *inconclusiva*, não como falha. As auditorias são
+as mesmas do terminal, na mesma assinatura do Claude Code.
+
+**O que impede uma página qualquer de dirigir o servidor:**
+
+- o cabeçalho `Host` precisa ser o do próprio servidor (uma página de *DNS rebinding* manda outro);
+- toda ação (`POST`) exige o token de `.panel/token` (modo 600), que só a página servida carrega, num
+  cabeçalho `X-Panel-Token`, e o corpo precisa ser `application/json`, que um formulário não envia;
+- a política de conteúdo é `default-src 'none'` sem `unsafe-inline`, e o relatório é escapado antes de
+  virar HTML;
+- nenhum comando é montado de texto livre: o plugin precisa ser um dos descobertos, os grupos precisam
+  existir no `config.json` dele, a referência precisa ser um commit existente, as chaves desconhecidas
+  são recusadas e o processo é iniciado com uma lista de argumentos, sem shell.
+
+Limites: leitura de dados e relatórios não pede o token (o `Host` e o encaminhamento de porta já a
+restringem); o painel não substitui o terminal para as opções que não expõe (`--model`, `--jobs`,
+`--batch-lines`); e só funciona com a página aberta enquanto o servidor roda.
+
 ## Checagens de schema contra código — `moodle-static-checks`
 
 Cinco checagens determinísticas (sem IA, custo zero de cota) que comparam o que o plugin
