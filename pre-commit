@@ -37,6 +37,12 @@ FEATURE_STAGED=$(echo "$ALL_STAGED" | grep '\.feature$')
 # only. PHPCS/ESLint/Mustache above still run on docs/ normally — those checks
 # are generic enough to stay useful (e.g. ESLint on docs/assets/js/*.js).
 AI_STAGED=$(echo "$ALL_STAGED" | grep -v '^docs/' | grep -v '\.feature$')
+# The panel's page is a standalone tool (no Moodle plugin, no core/str, no path-class scoping), so
+# the Moodle-plugin rules of the review do not apply. Only in this repository: a plugin that happens
+# to have a panel/ folder keeps its review.
+if [ -f "$PWD/audit_panel.py" ]; then
+    AI_STAGED=$(echo "$AI_STAGED" | grep -v '^panel/')
+fi
 
 # Sem arquivos relevantes staged → nada a fazer
 if [ -z "$ALL_STAGED" ]; then
