@@ -38,6 +38,7 @@ import time
 from datetime import date
 from pathlib import Path
 
+import audit_focus
 import audit_scope
 from audit_static_checks import run_static_checks
 from audit_url_probe import check_url_validators
@@ -478,19 +479,25 @@ def build_batches(scan_files, batch_lines):
     return batches
 
 
-def _batch_key(plugin_dir, batch):
-    """Content hash, so fixing one file only invalidates the batches containing it."""
+def _batch_key(plugin_dir, batch, focus='all'):
+    """Content hash, so fixing one file only invalidates the batches containing it.
+
+    The focus is part of the key because a security scan and a quality scan of the same file
+    answer different questions; `all` keeps the key it always had, so earlier scans stay cached.
+    """
     contents = []
     for entry in batch:
         try:
             contents.append((entry['rel'], (plugin_dir / entry['rel']).read_bytes()))
         except OSError:
             contents.append((entry['rel'], b''))
+    if focus != 'all':
+        return hash_key(PROMPT_VERSION, focus, contents)
     return hash_key(PROMPT_VERSION, contents)
 
 
 def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use_cache,
-                 clock=None, failures=None):
+                 clock=None, failures=None, focus='all'):
     """Scan every batch; `failures`, when given, receives the batches that could not be read.
 
     A failed batch contributes no candidates and is not cached, so the next run retries it.
@@ -501,7 +508,8 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
         def compute():
             listing = '\n'.join(f'- {e["rel"]} ({e["lines"]} linhas)' for e in batch)
             try:
-                text = call_claude(SCAN_PROMPT + listing, plugin_dir, model, fallback, rules)
+                prompt = audit_focus.scan_prompt(focus, SCAN_PROMPT)
+                text = call_claude(prompt + listing, plugin_dir, model, fallback, rules)
                 findings = extract_json(text)
                 return findings if isinstance(findings, list) else []
             except Exception as exc:
@@ -510,7 +518,7 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
                     failures.append(batch)
                 raise Uncached([])
 
-        return cached(CACHE_DIR, franken, 'scan', _batch_key(plugin_dir, batch),
+        return cached(CACHE_DIR, franken, 'scan', _batch_key(plugin_dir, batch, focus),
                      use_cache, compute)
 
     results = run_parallel(batches, jobs, run_batch, 'lote',
@@ -941,7 +949,7 @@ def incomplete_reason(info):
     return ' e '.join(parts) + cause + '; nenhuma nota foi calculada'
 
 
-def print_groups(scan_files, ignored_files, config):
+def print_groups(scan_files, ignored_files, config, plugin_dir=None):
     """--list-groups: how the plugin splits into the configured groups."""
     total = sum(e['lines'] for e in scan_files)
     print(f'{len(scan_files)} arquivos, {total} linhas na leitura'
@@ -952,13 +960,35 @@ def print_groups(scan_files, ignored_files, config):
         return 0
     assigned, unassigned = audit_scope.assign_groups(scan_files, config['groups'])
     for name, entries in assigned.items():
-        print(f'  {name}: {len(entries)} arquivos, {sum(e["lines"] for e in entries)} linhas')
+        closed = (' — segurança encerrada (2 rodadas completas sem nada acima de low)'
+                  if plugin_dir and audit_focus.is_closed(plugin_dir, name) else '')
+        print(f'  {name}: {len(entries)} arquivos, {sum(e["lines"] for e in entries)} linhas'
+              + closed)
     if unassigned:
         print(f'  sem grupo: {len(unassigned)} arquivos, '
               f'{sum(e["lines"] for e in unassigned)} linhas (não entram em nenhum --only de grupo)')
         for entry in unassigned[:10]:
             print(f'    {entry["rel"]}')
     return 0
+
+
+def focus_grades(confirmed, focus):
+    """(grade, reason, security_grade) for a run of this focus.
+
+    all       every type graded together; the security grade counts only the security findings.
+    security  one grade, from the security findings.
+    quality   the grade covers the non-security findings; the security grade is None unless the run
+              happened to find a vulnerability (security is not what this run assessed).
+    """
+    security, others = audit_focus.split_by_security(confirmed)
+    if focus == 'security':
+        grade, reason = compute_grade(security)
+        return grade, reason, grade
+    if focus == 'quality':
+        grade, reason = compute_grade(others)
+        return grade, reason, (compute_grade(security)[0] if security else None)
+    grade, reason = compute_grade(confirmed)
+    return grade, reason, compute_grade(security)[0]
 
 
 def compute_grade(findings):
@@ -1162,6 +1192,47 @@ def sweep_section(ordered, add):
     add('')
 
 
+FOCUS_GRADE_NOTE = {
+    'all': '**Os quatro tipos contam**: um único `low` de qualidade de código já limita a nota a `A`.',
+    'security': 'Esta nota é **só de segurança**: qualidade, conformidade e boa prática ficam para uma '
+                'rodada `--focus quality` e não entram aqui.',
+    'quality': 'Esta nota é **só de qualidade, conformidade e boa prática**: a segurança tem nota '
+               'própria, de uma rodada `--focus security`.',
+}
+
+
+def focus_types(focus, confirmed):
+    """The finding types shown in the type-by-severity table of a run of this focus."""
+    if focus == 'security':
+        return ['security']
+    if focus == 'quality':
+        found_security = any(f.get('finding_type', 'security') == 'security' for f in confirmed)
+        return [t for t in FINDING_TYPES if t != 'security' or found_security]
+    return list(FINDING_TYPES)
+
+
+def focus_notes(ctx):
+    """Lines under the grade that say what this run assessed and what it did not."""
+    focus = ctx.get('focus', 'all')
+    notes = []
+    if focus == 'security':
+        notes.append('> **Foco: segurança.** Qualidade, conformidade e boa prática não foram avaliadas'
+                     ' nesta rodada (use `--focus quality`).')
+        if ctx.get('out_of_focus'):
+            notes.append(f'> {len(ctx["out_of_focus"])} achado(s) verificado(s) se mostraram de '
+                         'qualidade, não de segurança, e ficaram fora desta nota.')
+    elif focus == 'quality':
+        notes.append('> **Foco: qualidade.** A segurança não foi avaliada nesta rodada (use '
+                     '`--focus security`).')
+        seen = [f for f in ctx.get('confirmed', []) if f.get('finding_type', 'security') == 'security']
+        if seen and ctx.get('security_grade'):
+            notes.append(f'{len(seen)} vulnerabilidade(s) apareceram durante a leitura e constam nos '
+                         f'achados; nota só dos achados de segurança vistos: **{ctx["security_grade"]}**')
+    elif ctx.get('security_grade'):
+        notes.append(f'Nota contando só os achados de segurança: **{ctx["security_grade"]}**')
+    return notes
+
+
 def render_report(ctx):
     """Assemble the Markdown report, ordered the way a code review is normally read."""
     inv, confirmed, refuted = ctx['inventory'], ctx['confirmed'], ctx['refuted']
@@ -1195,13 +1266,14 @@ def render_report(ctx):
     if grade_reason:
         add(f'*{grade_reason}*')
         add('')
-    if ctx.get('security_grade'):
-        add(f'Nota contando só os achados de segurança: **{ctx["security_grade"]}**')
+    focus = ctx.get('focus', 'all')
+    for line in focus_notes(ctx):
+        add(line)
         add('')
     table = type_counts(confirmed)
     add('| Tipo | ' + ' | '.join(SEVERITY_ORDER) + ' |')
     add('|---|' + '---|' * len(SEVERITY_ORDER))
-    for ftype in FINDING_TYPES:
+    for ftype in focus_types(focus, confirmed):
         cells = [f'**{table[ftype][sev]}**' if table[ftype][sev] else '0'
                  for sev in SEVERITY_ORDER]
         add(f'| {FINDING_TYPE_LABELS[ftype]} | ' + ' | '.join(cells) + ' |')
@@ -1211,8 +1283,7 @@ def render_report(ctx):
     add('> A nota é **dominada pelo pior achado**, não por soma de penalidades: um `critical`'
         ' resulta em `F`, um `high` em `D`, dois `medium` em `B`, um `medium` em `B+`; só de'
         ' `low` a nota é `A` (até 7, com 5 a 7 sendo fronteira) ou `B+` (8 ou mais); sem `low`,'
-        ' `A+` — achados `info` não tiram o A+. **Os quatro tipos contam**: um único `low` de'
-        ' qualidade de código já limita a nota a `A`.')
+        ' `A+` — achados `info` não tiram o A+. ' + FOCUS_GRADE_NOTE.get(focus, FOCUS_GRADE_NOTE['all']))
     add('')
 
     # ---- Sumário executivo ------------------------------------------------
@@ -1481,6 +1552,13 @@ def main():
                              '(inclui o que ainda não foi commitado)')
     parser.add_argument('--list-groups', action='store_true',
                         help='mostra os grupos do plugin com arquivos e linhas, e sai')
+    parser.add_argument('--focus', choices=audit_focus.FOCI, default='all',
+                        help='security: só vulnerabilidades, com nota própria; quality: qualidade, '
+                             'conformidade e boa prática, lendo por padrão só o que mudou desde '
+                             'a última tag; all (padrão): os dois juntos')
+    parser.add_argument('--full', action='store_true',
+                        help='no foco quality, lê o plugin inteiro em vez do que mudou desde a '
+                             'última tag')
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--from-json', default=None,
@@ -1515,9 +1593,8 @@ def main():
         # and outside the grade; they are still rendered in their own section, and the grade
         # is recomputed so an old JSON re-rendered today follows today's grading rule.
         ctx['quality_findings'] = attach_snippets(ctx.get('quality_findings', []), plugin_dir)
-        ctx['grade'], ctx['grade_reason'] = compute_grade(ctx['confirmed'])
-        ctx['security_grade'], _ = compute_grade(
-            [f for f in ctx['confirmed'] if f.get('finding_type') == 'security'])
+        (ctx['grade'], ctx['grade_reason'],
+         ctx['security_grade']) = focus_grades(ctx['confirmed'], ctx.get('focus', 'all'))
         if ctx.get('incomplete'):
             ctx['grade'] = ctx['security_grade'] = INCONCLUSIVE_GRADE
             ctx['grade_reason'] = incomplete_reason(ctx['incomplete'])
@@ -1554,12 +1631,17 @@ def main():
         return 1
 
     if args.list_groups:
-        return print_groups(scan_files, ignored_files, config)
+        return print_groups(scan_files, ignored_files, config, plugin_dir)
 
     # The attack-surface inventory describes the whole plugin even when the scan is narrowed.
     inventory = build_inventory(plugin_dir, scan_files, metadata_only)
     inventory['tests_scanned'] = with_tests
 
+    if (args.focus == 'quality' and not args.full and not args.only and not args.since):
+        tag = audit_scope.last_tag(plugin_dir)
+        if tag:
+            args.since = tag
+            print(f'Foco qualidade: lendo só o que mudou desde {tag} (use --full para o plugin inteiro)')
     full_files = scan_files
     if args.only:
         scan_files = audit_scope.select_only(scan_files, args.only, config['groups'])
@@ -1603,7 +1685,11 @@ def main():
     clock = Clock(progress=progress)
 
     # Phase A
-    if args.no_phpstan:
+    if args.focus == 'security':
+        clock.phase('A', 'PHPStan (pulado: foco em segurança)')
+        phpstan_msgs, phpstan_err = [], None
+        clock.done('0 mensagem(ns)')
+    elif args.no_phpstan:
         clock.phase('A', 'PHPStan (pulado via --no-phpstan)')
         phpstan_msgs, phpstan_err = [], None
         clock.done('0 mensagem(ns)')
@@ -1648,7 +1734,7 @@ def main():
     failed_batches = []
     all_candidates = scan_batches(batches, plugin_dir, franken, args.model,
                                   args.fallback_model, rules, args.jobs, use_cache,
-                                  clock=clock, failures=failed_batches)
+                                  clock=clock, failures=failed_batches, focus=args.focus)
     scan_count = len(all_candidates)
     # Every source feeds the same verification: the AI scan, the static checks (Phase A)
     # and the PHPStan messages the triage judged real (Phase B).
@@ -1656,6 +1742,7 @@ def main():
                   for f in all_candidates if isinstance(f, dict)]
     candidates += [normalize_finding(f) for f in static_candidates]
     candidates += [normalize_finding(f) for f in phpstan_candidates(triaged)]
+    candidates = audit_focus.keep_for_focus(candidates, args.focus)
     by_type = {t: sum(1 for f in candidates if f['finding_type'] == t) for t in FINDING_TYPES}
     clock.done(f'{scan_count} da varredura, {len(candidates)} no total — '
                + ', '.join(f'{n} {FINDING_TYPE_LABELS[t]}' for t, n in by_type.items() if n))
@@ -1674,6 +1761,10 @@ def main():
     else:
         confirmed, refuted, unverified = candidates, [], []
 
+    out_of_focus = []
+    if args.focus == 'security':
+        confirmed, out_of_focus = audit_focus.split_by_security(confirmed)
+
     # Phase E
     if len(confirmed) > 1 and not quota.exhausted:
         clock.phase('E', f'Deduplicando {len(confirmed)} achado(s) confirmado(s)')
@@ -1684,15 +1775,14 @@ def main():
 
     # Phase F
     confirmed = attach_snippets(confirmed, plugin_dir)
-    grade, grade_reason = compute_grade(confirmed)
-    security_grade, _ = compute_grade(
-        [f for f in confirmed if f.get('finding_type') == 'security'])
+    grade, grade_reason, security_grade = focus_grades(confirmed, args.focus)
     ctx = {
         'franken': franken, 'version': version, 'inventory': inventory,
         'confirmed': confirmed, 'refuted': refuted, 'unverified': unverified,
         'phpstan': triaged,
         'libs': libs, 'grade': grade, 'grade_reason': grade_reason,
         'security_grade': security_grade, 'scope_note': scope_note,
+        'focus': args.focus, 'out_of_focus': out_of_focus,
     }
     # A scan that skipped batches or left candidates unverified has not examined the plugin:
     # grading it would turn "the quota ran out" into "no findings".
@@ -1731,8 +1821,17 @@ def main():
             json.dumps(ctx, ensure_ascii=False, indent=2), encoding='utf-8')
 
     counts = severity_counts(confirmed)
+    if args.focus == 'security' and not incomplete and not args.since:
+        audit_focus.record_run(plugin_dir, args.focus, args.only,
+                               audit_focus.highest_severity(confirmed, SEVERITY_ORDER))
+        if all(audit_focus.is_closed(plugin_dir, key)
+               for key in audit_focus.scope_key(args.only)):
+            print('')
+            print('Escopo de segurança encerrado: as últimas '
+                  f'{audit_focus.CLOSING_RUNS} rodadas completas não tiveram nada acima de low.')
     print('')
-    print(f'Grade: {grade} — {grade_reason}  (só segurança: {security_grade})')
+    print(f'Grade: {grade} — {grade_reason}'
+          + (f'  (só segurança: {security_grade})' if args.focus == 'all' else f'  [foco: {args.focus}]'))
     print('  ' + ' · '.join(f'{s}: {counts[s]}' for s in SEVERITY_ORDER))
     print('')
     print(f'Relatório: {report_path}')

@@ -23,6 +23,10 @@
 #   --jobs N             : chamadas de IA em paralelo (padrão 5).
 #   --only G [G...]      : lê só estes grupos (de <plugin>/.plans/security-audit/config.json)
 #                          ou caminhos. Informe o plugin ANTES: ... blocks/playerhud --only A B
+#   --focus F            : security (só vulnerabilidades, nota própria, sem PHPStan), quality
+#                          (qualidade, conformidade e boa prática; lê por padrão só o que mudou
+#                          desde a última tag) ou all (padrão: os dois juntos).
+#   --full               : no foco quality, lê o plugin inteiro em vez do que mudou.
 #   --since REF          : lê só os arquivos alterados desde esta tag/branch/commit
 #                          (inclui o que não foi commitado). Combina com --only.
 #   --list-groups        : mostra os grupos do plugin com arquivos e linhas, e sai.
@@ -56,16 +60,16 @@ PLUGIN=""
 PASSTHRU=()
 while [ $# -gt 0 ]; do
     case "$1" in
- --model|--fallback-model|--phpstan-level|--batch-lines|--jobs|--from-json|--since)
+ --model|--fallback-model|--phpstan-level|--batch-lines|--jobs|--from-json|--since|--focus)
             PASSTHRU+=("$1" "${2:?$1 exige um valor}"); shift 2 ;;
         --only)
             # Group names or paths, up to the next option. The plugin goes BEFORE --only.
             PASSTHRU+=("$1"); shift
             [ $# -gt 0 ] && [[ "$1" != -* ]] || { echo "erro: --only exige grupo(s) ou caminho(s)" >&2; exit 1; }
             while [ $# -gt 0 ] && [[ "$1" != -* ]]; do PASSTHRU+=("$1"); shift; done ;;
-        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests|--list-groups)
+        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests|--list-groups|--full)
             PASSTHRU+=("$1"); shift ;;
-        -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;
         *) [ -n "$PLUGIN" ] && { echo "erro: informe um plugin só" >&2; exit 1; }; PLUGIN="$1"; shift ;;
     esac

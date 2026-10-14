@@ -105,6 +105,14 @@ def changed_since(plugin_dir, ref):
     return changed
 
 
+def last_tag(plugin_dir):
+    """The most recent tag reachable from HEAD, or None (no git, no tags)."""
+    result = subprocess.run(['git', '-C', str(plugin_dir), 'describe', '--tags', '--abbrev=0'],
+                            capture_output=True, text=True)
+    tag = result.stdout.strip()
+    return tag if result.returncode == 0 and tag else None
+
+
 def targets_tests(selectors, groups, tests_dir='tests'):
     """Does `--only` name something under tests/? Those files are not read unless asked for."""
     for selector in selectors or []:

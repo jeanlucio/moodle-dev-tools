@@ -836,6 +836,38 @@ estão na faixa de 5 a 7 `low`, onde contagens idênticas tiveram A e B+ — por
 O modelo aditivo original (100 − penalidades) foi abandonado porque distorce o relatório: ele
 diz que oito falhas de higiene são piores que um XSS armazenado.
 
+### Foco da auditoria: segurança e qualidade
+
+A auditoria nasceu de segurança e passou a cobrir também qualidade, conformidade e boa prática. Os
+dois trabalhos têm custo, nota e ponto de parada diferentes, então `--focus` escolhe o que a rodada
+procura. O relatório já classifica cada achado por tipo; o foco decide quais tipos a rodada pede,
+verifica e nota.
+
+| | `--focus security` | `--focus quality` | `--focus all` (padrão) |
+|---|---|---|---|
+| Procura | vulnerabilidades (Camadas 1 a 3) | Camada 4: qualidade, conformidade, boa prática | tudo, como antes |
+| Leitura | o escopo pedido (`--only`, `--since`) | só o que mudou desde a última tag; `--full` lê tudo | o escopo pedido |
+| PHPStan | pulado (é ferramenta de qualidade) | roda | roda |
+| Nota | só de segurança | só de qualidade; a segurança não é avaliada | os quatro tipos juntos |
+| Achado do outro tipo | o que a verificação reclassifica como qualidade fica fora da nota e é contado | uma vulnerabilidade vista **é reportada** e ganha nota própria: nunca se perde | entram todos |
+
+- **Cache:** o foco `all` usa a mesma chave de antes, então varreduras já feitas continuam válidas;
+  `security` e `quality` têm chave própria, porque respondem a perguntas diferentes sobre o mesmo
+  arquivo.
+- **Checagens determinísticas** (`moodle-static-checks`, Fase A) rodam em todo foco. Elas pegam de graça
+  a maior parte da qualidade; é por isso que a IA de qualidade lê só o diff.
+- **Ponto de parada da segurança:** cada rodada de `--focus security` completa e de escopo inteiro
+  (sem `--since`) grava o pior achado em `<plugin>/.plans/security-audit/state.json`, por grupo de
+  `--only` (ou `*` para o plugin todo). Duas rodadas seguidas sem nada acima de `low` encerram o
+  escopo: o fim da rodada avisa, e `--list-groups` marca o grupo como encerrado. Um `medium` ou maior
+  reabre.
+
+```bash
+moodle-security-audit blocks/playerhud --focus security --only A      # gate de segurança, grupo A
+moodle-security-audit blocks/playerhud --focus quality                # qualidade, só o que mudou desde a tag
+moodle-security-audit blocks/playerhud --focus quality --full         # qualidade, plugin inteiro
+```
+
 ### Opções
 
 | Flag | Padrão | Efeito |
@@ -848,6 +880,8 @@ diz que oito falhas de higiene são piores que um XSS armazenado.
 | `--with-moodlecheck` | — | Roda também o `local_moodlecheck` (PHPDoc; release, não segurança) |
 | `--no-verify` | — | Pula a Fase D (mais rápido, mais falso positivo) |
 | `--with-tests` | — | Lê também a pasta `tests/` a fundo. Por padrão os testes só são contados: lê-los custa mais cota (o início da rodada mostra quantas linhas a mais). Teste quebrado (que não consegue falhar) conta como `low` |
+| `--focus F` | `all` | `security`: só vulnerabilidades, com nota própria e sem PHPStan. `quality`: qualidade, conformidade e boa prática, lendo por padrão só o que mudou desde a última tag. `all`: os dois juntos, como antes (ver *Foco da auditoria*) |
+| `--full` | — | No foco `quality`, lê o plugin inteiro em vez do que mudou desde a última tag |
 | `--no-cache` | — | Ignora o cache de lotes |
 | `--json` | — | Grava também o relatório em JSON |
 | `--from-json ARQ` | — | Re-renderiza o relatório de um JSON já gerado, sem refazer a análise |
