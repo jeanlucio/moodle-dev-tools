@@ -366,13 +366,16 @@ class ServerTest(unittest.TestCase):
         return self.request('POST', path, json.dumps(payload), headers)
 
     def test_a_page_with_a_foreign_host_header_is_refused(self):
-        for host in ('evil.example', f'evil.example:{self.port}', '127.0.0.1:1'):
+        for host in ('evil.example', f'evil.example:{self.port}', '127.0.0.1.evil.example',
+                     f'localhost.evil.example:{self.port}', f'192.168.0.5:{self.port}'):
             with self.subTest(host=host):
                 self.assertEqual(403, self.request('GET', '/api/plugins', host=host)[0].status)
 
-    def test_localhost_and_127_are_both_accepted(self):
-        for host in (f'localhost:{self.port}', f'127.0.0.1:{self.port}'):
-            self.assertEqual(200, self.request('GET', '/api/plugins', host=host)[0].status)
+    def test_localhost_and_127_are_accepted_on_any_port_for_a_port_forward(self):
+        for host in (f'localhost:{self.port}', f'127.0.0.1:{self.port}', 'localhost:9999',
+                     '127.0.0.1:8766', 'localhost'):
+            with self.subTest(host=host):
+                self.assertEqual(200, self.request('GET', '/api/plugins', host=host)[0].status)
 
     def test_the_served_page_carries_the_token_and_a_strict_policy(self):
         response, body = self.request('GET', '/')

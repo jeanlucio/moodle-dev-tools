@@ -4,7 +4,7 @@
 
 The server listens on 127.0.0.1 only: reach it from another machine through a port forward (the
 VS Code Ports tab, or `ssh -L 8765:127.0.0.1:8765 host`). Three things keep a web page from
-driving it by accident: the Host header must be this server's own (a DNS-rebinding page sends
+driving it by accident: the Host header must be this machine's own name (a DNS-rebinding page sends
 another), every action needs the token that only the served page carries (a page from another
 site cannot read it), and an action must be JSON (a plain form post cannot send that).
 """
@@ -27,6 +27,7 @@ STATIC_DIR = panel_runs.TOOLS_DIR / 'panel'
 PROGRESS_DIR = panel_runs.TOOLS_DIR / '.progress'
 TOKEN_FILE = panel_runs.PANEL_DIR / 'token'
 DEFAULT_PORT = 8765
+ALLOWED_HOSTS = ('127.0.0.1', 'localhost')
 TICK_SECONDS = 2
 SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
 LOG_CHUNK = 65536
@@ -74,8 +75,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, {'error': message})
 
     def _host_ok(self):
-        allowed = {f'127.0.0.1:{self.port}', f'localhost:{self.port}'}
-        return self.headers.get('Host', '') in allowed
+        """Only this machine's own names. The port is not checked: a port forward may hand the
+        browser another local port than the one the server listens on, while a DNS-rebinding page
+        always arrives under a hostname that is not ours."""
+        host = self.headers.get('Host', '')
+        name = host.rsplit(':', 1)[0] if ':' in host else host
+        return name in ALLOWED_HOSTS
 
     def _json_body(self):
         length = int(self.headers.get('Content-Length') or 0)

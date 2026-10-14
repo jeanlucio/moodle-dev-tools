@@ -103,7 +103,7 @@ const staticCell = (plugin) => {
         return h('span', {class: 'hint'}, '—');
     }
     if (summary.error) {
-        return chip('erro', 'bad');
+        return h('span', {class: 'chip bad', title: summary.error}, 'erro');
     }
     const count = Object.values(summary).reduce((sum, n) => sum + n, 0);
     return count === 0
@@ -131,16 +131,33 @@ const loadPlugins = async () => {
     renderPlugins();
 };
 
+const summarize = (results) => Object.fromEntries(
+    Object.entries(results).filter(([, list]) => list.length).map(([name, list]) => [name, list.length]));
+
+/** One plugin at a time, so the button counts up and a failing plugin does not hide the rest. */
 const checkAll = async () => {
     const button = $('check-all');
     button.disabled = true;
-    button.textContent = 'Checando…';
-    try {
-        state.staticSummary = await api('/api/static-all');
+    let failed = 0;
+    for (const [index, plugin] of state.plugins.entries()) {
+        button.textContent = `Checando ${index + 1}/${state.plugins.length}…`;
+        try {
+            const {results} = await api(`/api/static?plugin=${encodeURIComponent(plugin.path)}`);
+            state.staticSummary[plugin.path] = summarize(results);
+        } catch (error) {
+            failed += 1;
+            state.staticSummary[plugin.path] = {error: error.message};
+        }
         renderPlugins();
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Checar todos (determinístico)';
+    }
+    button.disabled = false;
+    button.textContent = 'Checar todos (determinístico)';
+    const dirty = Object.values(state.staticSummary).filter((s) => !s.error && Object.keys(s).length).length;
+    const clean = state.plugins.length - dirty - failed;
+    $('queue-status').textContent = `Checagens: ${clean} limpo(s), ${dirty} com ocorrência(s)`
+        + (failed ? `, ${failed} com erro` : '');
+    if (failed) {
+        showBanner(`${failed} plugin(s) não puderam ser checados. Passe o mouse no chip "erro" ou use Checar no plugin.`);
     }
 };
 
@@ -151,8 +168,7 @@ const showStatic = async (plugin) => {
     $('static-dialog').showModal();
     try {
         const {results} = await api(`/api/static?plugin=${encodeURIComponent(plugin.path)}`);
-        state.staticSummary[plugin.path] = Object.fromEntries(
-            Object.entries(results).filter(([, list]) => list.length).map(([k, v]) => [k, v.length]));
+        state.staticSummary[plugin.path] = summarize(results);
         renderPlugins();
         const groups = Object.entries(results).filter(([, list]) => list.length);
         body.replaceChildren(...(groups.length
@@ -452,11 +468,19 @@ const openReports = async (plugin, preferred) => {
 
 // ---- start --------------------------------------------------------------- //
 
+const showBanner = (message) => {
+    $('banner-text').textContent = message;
+    $('banner').hidden = false;
+};
+
 const fail = (error) => {
-    $('queue-status').textContent = `Erro: ${error.message}`;
+    const hint = /host não permitido/.test(error.message)
+        ? ' Abra a página por localhost ou 127.0.0.1 (não pelo nome da máquina).' : '';
+    showBanner(`${error.message}.${hint}`);
 };
 
 $('check-all').addEventListener('click', () => checkAll().catch(fail));
+$('banner-close').addEventListener('click', () => { $('banner').hidden = true; });
 $('run-form').addEventListener('submit', submitRun);
 $('run-form').addEventListener('change', syncRunForm);
 $('run-cancel').addEventListener('click', () => $('run-dialog').close());
