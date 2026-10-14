@@ -83,4 +83,5 @@ select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-
   color: var(--muted); }
 .report h1 { font-size: 1.6rem; }
 .static-list { padding-left: 18px; }
+.ignored { color: var(--bad); }
 @media (max-width: 640px) { th:nth-child(2), td:nth-child(2) { display: none; } }

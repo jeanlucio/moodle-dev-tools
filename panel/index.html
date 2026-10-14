@@ -95,6 +95,31 @@
     <article id="report-body" class="report"></article>
   </dialog>
 
+  <dialog id="groups-dialog" class="wide" aria-labelledby="groups-title">
+    <div class="dialog-head">
+      <h2 id="groups-title">Grupos</h2>
+      <button type="button" id="groups-close" class="btn">Fechar</button>
+    </div>
+    <p class="hint">Para cada grupo, a última rodada que o auditou de verdade. Não contam: rodada
+      inconclusiva, com a verificação falha, restrita ao que mudou desde uma tag, ou (nos grupos de
+      testes) que não leu <code>tests/</code>. Segurança <em>encerrada</em> = as duas últimas rodadas
+      completas do grupo sem nada acima de <code>low</code>.</p>
+    <div class="table-wrap">
+      <table id="groups-table">
+        <thead>
+          <tr>
+            <th scope="col">Grupo</th>
+            <th scope="col">Tamanho</th>
+            <th scope="col">Última rodada válida</th>
+            <th scope="col">Segurança</th>
+            <th scope="col">Ação</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </dialog>
+
   <dialog id="static-dialog" class="wide" aria-labelledby="static-title">
     <div class="dialog-head">
       <h2 id="static-title">Checagens</h2>

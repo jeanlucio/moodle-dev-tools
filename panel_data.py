@@ -23,6 +23,7 @@ TYPE_DIRS = {
 }
 REPORT_DIR = '.plans/security-audit'
 REPORT_NAME_RE = re.compile(r'^[A-Za-z0-9_]+-(\d{4}-\d\d-\d\d)(?:-(\d{6}))?\.md$')
+SCOPE_RE = re.compile(r'Escopo parcial \((.*?)\): (\d+) de (\d+) arquivos')
 SAFE_FILE_RE = re.compile(r'^[A-Za-z0-9_.\-]+\.md$')
 SAFE_REF_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/\-]{0,59}$')
 BATCH_LINES = 10000
@@ -115,6 +116,14 @@ def parse_report(path):
     grade = re.search(r'## Nota geral\s+# (\S+)', head)
     security = re.search(r'Nota contando só os achados de segurança: \*\*(\S+?)\*\*', head)
     focus = re.search(r'\*\*Foco: (segurança|qualidade)\.\*\*', head)
+    only, since = [], None
+    scope = SCOPE_RE.search(head)
+    if scope:
+        for part in scope.group(1).split('; '):
+            if part.startswith('apenas '):
+                only = [name.strip() for name in part[len('apenas '):].split(',')]
+            elif part.startswith('alterados desde '):
+                since = part[len('alterados desde '):].strip()
     return {
         'file': path.name,
         'date': REPORT_NAME_RE.match(path.name).group(1),
@@ -123,6 +132,12 @@ def parse_report(path):
         'focus': {'segurança': 'security', 'qualidade': 'quality'}.get(
             focus.group(1) if focus else '', 'all'),
         'partial': 'Escopo parcial' in head,
+        'only': only,
+        'since': since,
+        'tests_read': 'Testes (`tests/`): lidos a fundo' in head,
+        # A verification that failed leaves candidates unchecked, so a clean-looking grade is not
+        # a result (the tool now marks such runs inconclusive; older reports did not).
+        'verification_failed': 'verificação falhou' in text,
     }
 
 
@@ -159,8 +174,49 @@ def scan_scope(directory, with_tests=False, only=None, since=None):
     return scan, full, ignored
 
 
+def _ignored_reason(report, reads_tests):
+    """Why a report cannot count as having audited a group, or '' when it can."""
+    if report['grade'].lower().startswith('inconclusiva'):
+        return 'inconclusiva (cota)'
+    if report['verification_failed']:
+        return 'a verificação falhou'
+    if report['since']:
+        return f'só leu o que mudou desde {report["since"]}'
+    if reads_tests and not report['tests_read']:
+        return 'não leu tests/'
+    return ''
+
+
+def group_coverage(directory, names, test_groups=()):
+    """For each group: the newest report that audited it, and the newer one that was set aside.
+
+    A report covers a group when it read the whole plugin, or when it was a partial run that named
+    the group. It does not count when the run was inconclusive, when its verification failed, when
+    it was narrowed by `--since`, or, for a group that reads tests/, when it did not read tests/.
+    `ignored` is the newest report set aside before a usable one, so the panel can say why a
+    recent run does not show up.
+    """
+    parsed = [parse_report(path) for path in report_files(directory)]
+    found = {}
+    for name in names:
+        entry = {'last': None, 'ignored': None}
+        for report in parsed:
+            reason = _ignored_reason(report, name in test_groups)
+            covers = not report['partial'] or name in report['only']
+            if not covers:
+                continue
+            if reason:
+                if entry['ignored'] is None:
+                    entry['ignored'] = {'date': report['date'], 'file': report['file'], 'reason': reason}
+                continue
+            entry['last'] = {**report, 'scope': 'group' if report['partial'] else 'plugin'}
+            break
+        found[name] = entry
+    return found
+
+
 def groups_info(directory):
-    """The configured groups with their size and whether the security scope is closed.
+    """The configured groups with their size, last audit and whether the security scope is closed.
 
     The sizes count tests/ too, so a tests group shows what naming it would read; `tests` tells the
     reader that the group reads tests/ (which a run skips otherwise, because it costs more quota).
@@ -171,10 +227,22 @@ def groups_info(directory):
         return []
     scan, _, _ = scan_scope(directory, with_tests=True)
     assigned, _ = audit_scope.assign_groups(scan, config['groups'])
+    test_groups = {name for name in assigned if audit_scope.targets_tests(
+        [name], config['groups'], security_audit.TESTS_DIR)}
+    coverage = group_coverage(directory, list(assigned), test_groups)
     return [{'name': name, 'files': len(entries), 'lines': sum(e['lines'] for e in entries),
-             'closed': audit_focus.is_closed(directory, name),
-             'tests': audit_scope.targets_tests([name], config['groups'], security_audit.TESTS_DIR)}
+             'closed': audit_focus.is_closed(directory, name), 'tests': name in test_groups,
+             'last': coverage[name]['last'], 'ignored': coverage[name]['ignored']}
             for name, entries in assigned.items()]
+
+
+def groups_summary(directory):
+    """(covered, closed, total) over the plugin's groups; None when it has no groups."""
+    groups = groups_info(directory)
+    if not groups:
+        return None
+    return {'total': len(groups), 'covered': sum(1 for g in groups if g['last']),
+            'closed': sum(1 for g in groups if g['closed'])}
 
 
 def tags(directory, limit=25):

@@ -97,6 +97,11 @@ const auditCell = (audit) => {
     return h('div', {}, chips, h('small', {}, audit.date));
 };
 
+const groupsLine = (summary) => (summary
+    ? h('small', {}, `Grupos: ${summary.covered}/${summary.total} auditados`
+        + (summary.closed ? ` · ${summary.closed} encerrado(s)` : ''))
+    : null);
+
 const staticCell = (plugin) => {
     const summary = state.staticSummary[plugin.path];
     if (summary === undefined) {
@@ -117,11 +122,13 @@ const renderPlugins = () => {
     body.replaceChildren(...state.plugins.map((plugin) => h('tr', {},
         h('td', {}, h('strong', {}, plugin.component), h('small', {}, plugin.path)),
         h('td', {}, plugin.release || plugin.version),
-        h('td', {}, auditCell(plugin.last_audit)),
+        h('td', {}, auditCell(plugin.last_audit), groupsLine(plugin.groups_summary)),
         h('td', {}, staticCell(plugin)),
         h('td', {},
             h('button', {type: 'button', class: 'btn', onclick: () => openRunDialog(plugin)}, 'Auditar'),
             h('button', {type: 'button', class: 'btn', onclick: () => showStatic(plugin)}, 'Checar'),
+            plugin.groups_summary
+                ? h('button', {type: 'button', class: 'btn', onclick: () => openGroups(plugin)}, 'Grupos') : null,
             h('button', {type: 'button', class: 'btn', onclick: () => openReports(plugin)}, 'Relatórios')),
     )));
 };
@@ -237,18 +244,22 @@ const updateEstimate = async () => {
     }
 };
 
-const openRunDialog = async (plugin) => {
+const openRunDialog = async (plugin, preset = {}) => {
     state.current = plugin;
     $('run-title').textContent = `Auditar ${plugin.component}`;
     $('run-error').hidden = true;
     $('run-form').reset();
+    if (preset.focus) {
+        $('run-form').elements.focus.value = preset.focus;
+    }
     $('estimate').textContent = 'Calculando estimativa…';
     $('run-dialog').showModal();
     const detail = await api(`/api/plugin?path=${encodeURIComponent(plugin.path)}`);
     const groups = $('groups');
     groups.replaceChildren(...(detail.groups.length
         ? detail.groups.map((group) => h('label', {class: 'check'},
-            h('input', {type: 'checkbox', value: group.name, onchange: syncRunForm}),
+            h('input', {type: 'checkbox', value: group.name, onchange: syncRunForm,
+                checked: preset.group === group.name}),
             ` ${group.name} — ${group.files} arquivos, ${group.lines} linhas`,
             group.tests ? chip('lê tests/') : null,
             group.closed ? chip('segurança encerrada', 'good') : null))
@@ -363,6 +374,36 @@ const loadRuns = async () => {
 const cancelRun = async (id) => {
     await api(`/api/runs/${id}/cancel`, {method: 'POST', body: {}});
     await loadRuns();
+};
+
+// ---- groups -------------------------------------------------------------- //
+
+const groupRow = (plugin, group) => {
+    const last = group.last;
+    const lastCell = last
+        ? h('div', {}, auditCell(last), last.scope === 'plugin' ? chip('plugin inteiro') : null)
+        : h('span', {class: 'hint'}, 'nunca auditado');
+    const ignored = group.ignored
+        ? h('small', {class: 'ignored'}, `Relatório de ${group.ignored.date} não conta: ${group.ignored.reason}.`)
+        : null;
+    return h('tr', {},
+        h('td', {}, h('strong', {}, group.name), group.tests ? h('small', {}, 'lê tests/') : null),
+        h('td', {}, `${group.files} arquivos`, h('small', {}, `${group.lines} linhas`)),
+        h('td', {}, lastCell, ignored),
+        h('td', {}, group.closed ? chip('encerrada', 'good') : chip('aberta')),
+        h('td', {}, h('button', {type: 'button', class: 'btn', onclick: () => {
+            $('groups-dialog').close();
+            openRunDialog(plugin, {focus: 'security', group: group.name});
+        }}, 'Auditar')));
+};
+
+const openGroups = async (plugin) => {
+    $('groups-title').textContent = `Grupos — ${plugin.component}`;
+    const body = document.querySelector('#groups-table tbody');
+    body.replaceChildren();
+    $('groups-dialog').showModal();
+    const detail = await api(`/api/plugin?path=${encodeURIComponent(plugin.path)}`);
+    body.replaceChildren(...detail.groups.map((group) => groupRow(plugin, group)));
 };
 
 // ---- reports ------------------------------------------------------------- //
@@ -486,6 +527,7 @@ $('run-form').addEventListener('change', syncRunForm);
 $('run-cancel').addEventListener('click', () => $('run-dialog').close());
 $('report-close').addEventListener('click', () => $('report-dialog').close());
 $('static-close').addEventListener('click', () => $('static-dialog').close());
+$('groups-close').addEventListener('click', () => $('groups-dialog').close());
 
 loadPlugins().catch(fail);
 loadRuns().catch(fail);

@@ -67,6 +67,20 @@ def make_public(tmp):
     return public, plugin
 
 
+def write_report(plugin, stamp, grade='A', scope=None, tests_read=False, failed=False):
+    """A report with just the lines the panel reads: grade, scope, tests line, failed verification."""
+    text = f'# Relatório\n\n## Nota geral\n\n# {grade}\n\n'
+    if scope:
+        text += f'> **Escopo parcial ({scope}): 4 de 9 arquivos analisáveis.** A nota vale só para eles.\n\n'
+    text += '## Metodologia\n\n- Testes (`tests/`): ' + (
+        'lidos a fundo (`--with-tests`)' if tests_read else 'só contados, não lidos') + '\n\n'
+    if failed:
+        text += '## Descartados na verificação\n\n- **X** — verificação falhou: cota\n'
+    folder = plugin / '.plans' / 'security-audit'
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f'block_demo-{stamp}.md').write_text(text)
+
+
 STAND_IN = """#!/bin/sh
 echo "args: $@"
 echo "Relatório: /somewhere/block_demo-2026-10-14-130000.md"
@@ -172,6 +186,85 @@ class DataTest(unittest.TestCase):
             self.assertEqual(3, all_files['files'])
             self.assertEqual(1, only_b['files'])
             self.assertEqual(1, only_b['batches'])
+
+
+class GroupCoverageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        _, self.plugin = make_public(self.tmp.name)
+        # make_public already wrote a full-plugin report dated 2026-10-14; start from a clean slate.
+        for report in (self.plugin / '.plans' / 'security-audit').glob('block_demo-*.md'):
+            report.unlink()
+
+    def cover(self, names=('A', 'B', 'T'), tests=('T',)):
+        return panel_data.group_coverage(self.plugin, list(names), set(tests))
+
+    def test_a_group_never_audited_has_no_last_report(self):
+        self.assertIsNone(self.cover()['A']['last'])
+
+    def test_a_report_of_the_whole_plugin_covers_every_group(self):
+        write_report(self.plugin, '2026-10-01-100000', 'B+')
+        found = self.cover(tests=())
+        self.assertEqual({('2026-10-01', 'plugin')}, {(f['last']['date'], f['last']['scope']) for f in found.values()})
+
+    def test_a_partial_run_covers_only_the_groups_it_named(self):
+        write_report(self.plugin, '2026-10-02-100000', 'A+', scope='apenas A, B')
+        found = self.cover(tests=())
+        self.assertEqual('group', found['A']['last']['scope'])
+        self.assertEqual('group', found['B']['last']['scope'])
+        self.assertIsNone(found['T']['last'])
+
+    def test_the_newest_report_that_covers_the_group_wins(self):
+        write_report(self.plugin, '2026-10-01-100000', 'B+')
+        write_report(self.plugin, '2026-10-03-100000', 'A+', scope='apenas A')
+        found = self.cover(tests=())
+        self.assertEqual(('2026-10-03', 'A+'), (found['A']['last']['date'], found['A']['last']['grade']))
+        self.assertEqual(('2026-10-01', 'B+'), (found['B']['last']['date'], found['B']['last']['grade']))
+
+    def test_a_run_narrowed_by_since_does_not_count_and_is_reported_as_set_aside(self):
+        write_report(self.plugin, '2026-10-01-100000', 'B+')
+        write_report(self.plugin, '2026-10-05-100000', 'A+', scope='apenas A; alterados desde v1.0.0')
+        entry = self.cover(tests=())['A']
+        self.assertEqual('2026-10-01', entry['last']['date'])
+        self.assertEqual('2026-10-05', entry['ignored']['date'])
+        self.assertIn('v1.0.0', entry['ignored']['reason'])
+
+    def test_a_report_whose_verification_failed_is_not_a_result(self):
+        write_report(self.plugin, '2026-10-01-100000', 'B+')
+        write_report(self.plugin, '2026-10-06-100000', 'A+', failed=True)
+        entry = self.cover(tests=())['A']
+        self.assertEqual(('2026-10-01', 'B+'), (entry['last']['date'], entry['last']['grade']))
+        self.assertEqual('a verificação falhou', entry['ignored']['reason'])
+
+    def test_an_inconclusive_report_is_not_a_result(self):
+        write_report(self.plugin, '2026-10-07-100000', 'Inconclusiva')
+        entry = self.cover(tests=())['A']
+        self.assertIsNone(entry['last'])
+        self.assertIn('inconclusiva', entry['ignored']['reason'])
+
+    def test_a_group_that_reads_tests_needs_a_report_that_read_them(self):
+        write_report(self.plugin, '2026-10-01-100000', 'B+', tests_read=True)
+        write_report(self.plugin, '2026-10-08-100000', 'A+', tests_read=False)
+        entry = self.cover()['T']
+        self.assertEqual('2026-10-01', entry['last']['date'])
+        self.assertEqual('não leu tests/', entry['ignored']['reason'])
+
+    def test_a_group_that_does_not_read_tests_ignores_that_line(self):
+        write_report(self.plugin, '2026-10-08-100000', 'A+', tests_read=False)
+        self.assertEqual('2026-10-08', self.cover()['A']['last']['date'])
+
+    def test_groups_info_and_the_summary_carry_the_coverage(self):
+        write_report(self.plugin, '2026-10-02-100000', 'A+', scope='apenas A')
+        groups = {g['name']: g for g in panel_data.groups_info(self.plugin)}
+        self.assertEqual('A+', groups['A']['last']['grade'])
+        self.assertIsNone(groups['B']['last'])
+        self.assertEqual({'total': 2, 'covered': 1, 'closed': 0}, panel_data.groups_summary(self.plugin))
+
+    def test_a_plugin_without_groups_has_no_summary(self):
+        (self.plugin / '.plans' / 'security-audit' / 'config.json').write_text(
+            json.dumps({'ignore': [], 'groups': {}}))
+        self.assertIsNone(panel_data.groups_summary(self.plugin))
 
 
 class ValidationTest(unittest.TestCase):
