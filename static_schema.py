@@ -421,6 +421,8 @@ def weak_random(plugin_dir, accepted=None):
 # How each violation kind is reported: one spec per kind, shared by the audit and the CLI.
 SPECS = {
     ('backup_columns', None): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check backup_columns`: ele já varre todas as tabelas do plugin. Em seguida, confira o `restore_*_stepslib.php` (cada FK remapeada com `get_mappingid()`).'),
         'title': 'Coluna do install.xml que o backup do curso não salva',
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
         'rule_id': 'L2-BAK-1',
@@ -433,6 +435,8 @@ SPECS = {
                           'Se a omissão é deliberada, registrar em accepted.json com o motivo.',
     },
     ('delete_cleanup', 'never_deleted'): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check delete_cleanup`: ele já varre todas as tabelas. Confira também se o hook de exclusão (`delete_instance`, `instance_delete`, observer de `course_deleted`) realmente é chamado.'),
         'title': 'Tabela do plugin que nenhum código apaga',
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
         'rule_id': 'L2-DEL-1',
@@ -444,6 +448,8 @@ SPECS = {
                           '(contexto, tarefa agendada), registrar em accepted.json com o motivo.',
     },
     ('delete_cleanup', 'no_course_observer'): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check delete_cleanup`: ele já lista todas as tabelas chaveadas por curso sem observer.'),
         'title': 'Tabela chaveada por curso sem observer de course_deleted',
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
         'rule_id': 'L2-DEL-2',
@@ -456,6 +462,8 @@ SPECS = {
                           'puramente de log pode ir para accepted.json com o motivo.',
     },
     ('column_lengths', 'form'): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check column_lengths`. Depois confira os caminhos que gravam sem formulário (web services, assistente, importação, chamadas de IA): o valor chega truncado ao tamanho da coluna?'),
         'title': 'Campo de texto sem maxlength para a coluna char(N) que o recebe',
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'input_validation',
         'rule_id': 'L4-ROB-1',
@@ -467,6 +475,8 @@ SPECS = {
                           "'maxlength', N, 'client'); o HTML_QuickForm também valida no servidor.",
     },
     ('column_lengths', 'substr'): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check column_lengths`. Procure também `strlen(`, `str_pad(`, `strtolower(` e `ucfirst(` sobre texto de usuário: todos contam bytes.'),
         'title': 'substr() em bytes cortando texto no tamanho de uma coluna',
         'finding_type': 'code_quality', 'severity': 'low', 'category': 'robustness',
         'rule_id': 'L4-BUG-1',
@@ -476,6 +486,8 @@ SPECS = {
         'recommendation': 'Usar core_text::substr($texto, 0, N), que corta por caractere.',
     },
     ('user_preferences', None): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check user_preferences`. Confira também `get_user_preferences()` com nome dinâmico e preferências gravadas em outros arquivos.'),
         'title': 'Preferência de usuário gravada e não declarada no Privacy Provider',
         'finding_type': 'compliance', 'severity': 'low', 'category': 'privacy_api',
         'rule_id': 'L4-PRIV-1',
@@ -485,6 +497,8 @@ SPECS = {
                           'export_user_preferences() e apagar em delete_user_preferences().',
     },
     ('weak_random', None): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check weak_random`. Procure ainda `md5(` e `sha1(` sobre `time()`, `id` ou `timecreated` usados como código ou token.'),
         'title': 'Token ou código gerado com função previsível (uniqid/rand/mt_rand)',
         'finding_type': 'security', 'severity': 'low', 'category': 'confidential_info_leakage',
         'rule_id': 'L3-RAND-1',

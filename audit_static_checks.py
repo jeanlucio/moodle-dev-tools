@@ -103,6 +103,7 @@ def _finding(check, locations, description_extra=''):
         'impact': check.get('impact', ''),
         'mitigations': '',
         'recommendation': check['recommendation'],
+        'sweep_pattern': check.get('sweep_pattern', ''),
         'source': 'static',
         'deterministic': check.get('deterministic', False),
     }

@@ -525,6 +525,11 @@ def scan_batches(batches, plugin_dir, franken, model, fallback, rules, jobs, use
 #  Phase D — verification                                                      #
 # --------------------------------------------------------------------------- #
 
+# Bumped when the verification answer gains a field, so cached verdicts without it are redone.
+# It is kept apart from PROMPT_VERSION on purpose: that one also keys the scan cache, which is
+# the expensive part of a run and does not change when only the verification prompt does.
+VERIFY_REVISION = 'sweep1'
+
 VERIFY_PROMPT = """Verifique se este achado de segurança em um plugin Moodle é REAL e EXPLORÁVEL.
 
 Leia o código citado e o que for necessário ao redor. Seja cético: a maioria dos candidatos
@@ -547,7 +552,13 @@ Responda APENAS com JSON:
  "finding_type": "security | code_quality | compliance | best_practice",
  "category": "categoria final",
  "reason": "por que confirma ou refuta, citando o código",
- "poc": "passo a passo da exploração, se confirmado como security"}
+ "poc": "passo a passo da exploração, se confirmado como security",
+ "sweep_pattern": "como varrer o resto do plugin atrás do mesmo defeito (grep ou pergunta objetiva)"}
+
+"sweep_pattern": como varrer o RESTO do plugin atrás do MESMO defeito, em 1 ou 2 linhas: uma
+busca (grep/regex com os nomes reais) ou uma pergunta objetiva sobre o código. Quem lê o
+relatório usa isso para achar os irmãos do achado antes de dar o problema por fechado. Use
+string vazia só se o defeito é pontual e não se repete por padrão.
 
 Achado:
 """
@@ -584,7 +595,13 @@ Responda APENAS com JSON:
  "finding_type": "code_quality | compliance | best_practice | security",
  "category": "categoria final",
  "reason": "por que confirma ou refuta, citando o código",
- "poc": "cenário concreto: passos, entrada ou configuração → resultado errado"}
+ "poc": "cenário concreto: passos, entrada ou configuração → resultado errado",
+ "sweep_pattern": "como varrer o resto do plugin atrás do mesmo defeito (grep ou pergunta objetiva)"}
+
+"sweep_pattern": como varrer o RESTO do plugin atrás do MESMO defeito, em 1 ou 2 linhas: uma
+busca (grep/regex com os nomes reais) ou uma pergunta objetiva sobre o código. Quem lê o
+relatório usa isso para achar os irmãos do achado antes de dar o problema por fechado. Use
+string vazia só se o defeito é pontual e não se repete por padrão.
 
 Achado:
 """
@@ -631,6 +648,7 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
             finding['verdict'] = 'confirmed'
             finding['verify_reason'] = 'fato determinístico, sem verificação por IA'
             finding.setdefault('poc', '')
+            finding.setdefault('sweep_pattern', '')
             return normalize_finding(finding)
 
         prompt = (VERIFY_PROMPT if finding.get('finding_type', 'security') == 'security'
@@ -657,8 +675,9 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
 
         # A failed verification is not cached: the next run should retry it, not inherit
         # a refusal caused by a spend limit or a network blip.
-        key = hash_key(PROMPT_VERSION, finding.get('finding_type'), finding.get('title'),
-                       finding.get('file'), finding.get('line'), finding.get('description'))
+        key = hash_key(PROMPT_VERSION, VERIFY_REVISION, finding.get('finding_type'),
+                       finding.get('title'), finding.get('file'), finding.get('line'),
+                       finding.get('description'))
         path = cache_path(CACHE_DIR, franken, 'verify', key)
         result = None
         if use_cache and path.is_file():
@@ -679,6 +698,7 @@ def verify_findings(findings, plugin_dir, franken, model, fallback, rules, jobs,
         finding['verdict'] = result.get('verdict', 'refuted')
         finding['verify_reason'] = result.get('reason', '')
         finding['poc'] = result.get('poc', '')
+        finding['sweep_pattern'] = str(result.get('sweep_pattern') or '').strip()
         if result.get('finding_type') in FINDING_TYPES:
             finding['finding_type'] = result['finding_type']
         if result.get('category'):
@@ -1107,6 +1127,39 @@ def _render_finding(add, index, finding):
         add('')
         add(finding['recommendation'])
         add('')
+    if finding.get('sweep_pattern'):
+        add('**Padrão para varrer**')
+        add('')
+        add(finding['sweep_pattern'])
+        add('')
+
+
+SWEEP_INSTRUCTIONS = (
+    'Instrução para quem for corrigir este relatório (pessoa ou assistente numa sessão): antes de '
+    'dar um achado por fechado, procure o **Padrão para varrer** dele no restante do plugin e nos '
+    'outros plugins do ecossistema que tenham a mesma estrutura, e compare com o que o core do '
+    'Moodle faz no mesmo caso. Um achado costuma ser um exemplar de uma família: corrigir só o '
+    'exemplar faz o vizinho aparecer na próxima rodada. Corrija a família inteira no mesmo '
+    'trabalho, com um teste que falhe sem a correção, e registre quais irmãos foram achados.')
+
+
+def sweep_section(ordered, add):
+    """Closing section that tells the reader to sweep for the siblings of each finding.
+
+    `ordered` is the list in the order the findings are numbered in the report, so the numbers
+    here match the "### N." headings above.
+    """
+    patterns = [f for f in ordered if f.get('sweep_pattern')]
+    if not patterns:
+        return
+    add('## Varredura de irmãos')
+    add('')
+    add(SWEEP_INSTRUCTIONS)
+    add('')
+    for number, finding in enumerate(ordered, 1):
+        if finding.get('sweep_pattern'):
+            add(f'{number}. **{finding["title"]}**: {finding["sweep_pattern"]}')
+    add('')
 
 
 def render_report(ctx):
@@ -1230,13 +1283,13 @@ def render_report(ctx):
     # ---- Achados ----------------------------------------------------------
     add('## Achados')
     add('')
+    ordered = sorted(confirmed, key=lambda f: (
+        SEVERITY_ORDER.index(f.get('severity', 'info')),
+        FINDING_TYPES.index(f.get('finding_type', 'security'))))
     if not confirmed:
         add('Nenhum achado confirmado.')
         add('')
     else:
-        ordered = sorted(confirmed, key=lambda f: (
-            SEVERITY_ORDER.index(f.get('severity', 'info')),
-            FINDING_TYPES.index(f.get('finding_type', 'security'))))
         for index, finding in enumerate(ordered, 1):
             _render_finding(add, index, finding)
 
@@ -1320,6 +1373,8 @@ def render_report(ctx):
         add('')
         add(narrative['conclusion'])
         add('')
+
+    sweep_section(ordered, add)
 
     add('---')
     add('')

@@ -863,14 +863,20 @@ Segue a forma de um relatório de revisão de segurança profissional, na ordem 
 4. **Achados** — por severidade e tipo, cada um com severidade/tipo/categoria/regra/origem,
    locais afetados, **trecho do código**, descrição, avaliação de impacto, mitigações já
    presentes, prova de conceito (segurança) ou cenário de falha (demais tipos) e correção
-   recomendada. Quando a Fase E consolida dois ou mais achados independentes na mesma causa
+   recomendada e **padrão para varrer** (como achar o mesmo defeito no resto do plugin: um grep
+   ou uma pergunta objetiva). Quando a Fase E consolida dois ou mais achados independentes na mesma causa
    raiz, o resultado traz uma nota "Consolidado" explicando por quê, e os locais afetados de
    todos os achados originais aparecem juntos
 5. **Pontos fortes** — práticas verificadas no código
 6. **Bugs de código (PHPStan triado)** — registro bruto da triagem; os confirmados na Fase D
    também aparecem em Achados e contam na nota
 7. **Descartados na verificação** — candidatos refutados, para transparência e calibragem
-8. **Conclusão**
+8. **Varredura de irmãos** — instrução para quem for corrigir (pessoa ou assistente): antes de dar
+   um achado por fechado, procurar o padrão dele no resto do plugin, nos plugins parecidos e no
+   core, e corrigir a família inteira com um teste que falhe sem a correção. A verificação de
+   irmãos é feita na sessão de correção, não pela ferramenta, para não gastar cota. As checagens
+   determinísticas (`moodle-static-checks`) já trazem o próprio comando no padrão
+9. **Conclusão**
 
 O trecho de código é extraído **do arquivo em disco** pelo Python (linha do achado ± 3 de
 contexto, com `>` marcando a linha), não copiado pelo modelo — assim nunca diverge do que

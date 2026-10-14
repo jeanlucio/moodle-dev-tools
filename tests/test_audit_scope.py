@@ -242,5 +242,46 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn('inconclusiva', report.lower())
 
 
+
+class SweepPatternTest(unittest.TestCase):
+    def finding(self, title, severity, sweep=''):
+        return {'title': title, 'finding_type': 'code_quality', 'severity': severity,
+                'category': 'robustness', 'rule_id': 'L4-ROB-1', 'file': 'a.php', 'line': 3,
+                'description': 'd', 'recommendation': 'r', 'sweep_pattern': sweep}
+
+    def ctx(self, confirmed):
+        return ReportTest().ctx(confirmed=confirmed)
+
+    def test_the_pattern_is_shown_under_the_finding_and_listed_at_the_end(self):
+        report = audit.render_report(self.ctx([self.finding('Campo sem limite', 'low',
+                                                            "grep -rn \"addElement('text'\"")]))
+        self.assertIn('**Padrão para varrer**', report)
+        self.assertIn('## Varredura de irmãos', report)
+        self.assertIn("1. **Campo sem limite**: grep -rn \"addElement('text'\"", report)
+
+    def test_the_numbers_at_the_end_follow_the_order_of_the_report(self):
+        # The report sorts by severity, so the medium finding is number 1 even though it comes second.
+        report = audit.render_report(self.ctx([self.finding('Baixo', 'low', 'p-baixo'),
+                                               self.finding('Médio', 'medium', 'p-medio')]))
+        self.assertIn('### 1. Médio', report)
+        self.assertIn('1. **Médio**: p-medio', report)
+        self.assertIn('2. **Baixo**: p-baixo', report)
+
+    def test_nothing_is_added_when_no_finding_has_a_pattern(self):
+        report = audit.render_report(self.ctx([self.finding('Sem padrão', 'low')]))
+        self.assertNotIn('Padrão para varrer', report)
+        self.assertNotIn('Varredura de irmãos', report)
+
+    def test_the_closing_section_tells_the_reader_to_fix_the_whole_family(self):
+        report = audit.render_report(self.ctx([self.finding('X', 'low', 'busca')]))
+        self.assertIn('Corrija a família inteira', report)
+
+    def test_deterministic_checks_carry_their_own_pattern(self):
+        import static_schema
+        for key, spec in static_schema.SPECS.items():
+            with self.subTest(check=key):
+                self.assertIn('moodle-static-checks', spec['sweep_pattern'])
+
+
 if __name__ == '__main__':
     unittest.main()
