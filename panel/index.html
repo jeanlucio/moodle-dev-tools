@@ -76,6 +76,7 @@
         <legend>Opções</legend>
         <label class="check"><input type="checkbox" id="with-tests"> Ler também a pasta tests/ (custa mais cota)</label>
         <label class="check"><input type="checkbox" id="no-verify"> Pular a verificação (mais barato, mais falso positivo)</label>
+        <label class="check"><input type="checkbox" id="no-phpstan"> <span id="no-phpstan-text">Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)</span></label>
       </fieldset>
       <p id="estimate" class="estimate" role="status" aria-live="polite">Calculando estimativa…</p>
       <p id="run-error" class="error" role="alert" hidden></p>

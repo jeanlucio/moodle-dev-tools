@@ -27,9 +27,10 @@ TOOLS_DIR = Path(__file__).resolve().parent
 PANEL_DIR = TOOLS_DIR / '.panel'
 RUNS_DIR = PANEL_DIR / 'runs'
 RUNNER = TOOLS_DIR / 'panel_runner.py'
-OPTIONS = ('plugin', 'focus', 'only', 'since', 'full', 'with_tests', 'no_verify')
-FLAGS = ('full', 'with_tests', 'no_verify')
-FLAG_ARGS = {'full': '--full', 'with_tests': '--with-tests', 'no_verify': '--no-verify'}
+OPTIONS = ('plugin', 'focus', 'only', 'since', 'full', 'with_tests', 'no_verify', 'no_phpstan')
+FLAGS = ('full', 'with_tests', 'no_verify', 'no_phpstan')
+FLAG_ARGS = {'full': '--full', 'with_tests': '--with-tests', 'no_verify': '--no-verify',
+             'no_phpstan': '--no-phpstan'}
 ACTIVE = ('queued', 'running')
 MAX_GROUPS = 20
 

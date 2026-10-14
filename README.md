@@ -896,6 +896,7 @@ moodle-security-audit blocks/playerhud --focus quality --full         # qualidad
 | `--jobs N` | `5` | Chamadas de IA em paralelo |
 | `--with-moodlecheck` | — | Roda também o `local_moodlecheck` (PHPDoc; release, não segurança) |
 | `--no-verify` | — | Pula a Fase D (mais rápido, mais falso positivo) |
+| `--no-phpstan` | — | Pula a Fase A (PHPStan e a triagem dele); a rodada `--focus security` já não o usa |
 | `--with-tests` | — | Lê também a pasta `tests/` a fundo. Por padrão os testes só são contados: lê-los custa mais cota (o início da rodada mostra quantas linhas a mais). Teste quebrado (que não consegue falhar) conta como `low` |
 | `--focus F` | `all` | `security`: só vulnerabilidades, com nota própria e sem PHPStan. `quality`: qualidade, conformidade e boa prática, lendo por padrão só o que mudou desde a última tag. `all`: os dois juntos, como antes (ver *Foco da auditoria*) |
 | `--full` | — | No foco `quality`, lê o plugin inteiro em vez do que mudou desde a última tag |

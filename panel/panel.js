@@ -195,20 +195,27 @@ let estimateTimer = null;
 const runOptions = () => {
     const form = $('run-form');
     const scope = form.elements.scope.value;
+    const focus = form.elements.focus.value;
     return {
         plugin: state.current.path,
-        focus: form.elements.focus.value,
+        focus,
         only: [...document.querySelectorAll('#groups input:checked')].map((box) => box.value),
         since: scope === 'since' ? $('since').value : null,
         full: scope === 'full',
         with_tests: $('with-tests').checked,
         no_verify: $('no-verify').checked,
+        no_phpstan: $('no-phpstan').checked && focus !== 'security',
     };
 };
 
 const syncRunForm = () => {
     const focus = $('run-form').elements.focus.value;
     $('full-choice').hidden = focus !== 'quality';
+    // The security focus never runs PHPStan, so there is nothing to skip.
+    $('no-phpstan').disabled = focus === 'security';
+    $('no-phpstan-text').textContent = focus === 'security'
+        ? 'PHPStan: a rodada de segurança já não o usa'
+        : 'Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)';
     if (focus !== 'quality' && $('run-form').elements.scope.value === 'full') {
         $('run-form').elements.scope.value = 'default';
     }

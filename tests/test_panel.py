@@ -286,8 +286,9 @@ class ValidationTest(unittest.TestCase):
 
     def test_a_full_request_is_accepted(self):
         options = self.check({'focus': 'security', 'only': ['A', 'B'], 'since': 'v1.0.0',
-                              'with_tests': True, 'no_verify': True})
+                              'with_tests': True, 'no_verify': True, 'no_phpstan': True})
         self.assertEqual(['A', 'B'], options['only'])
+        self.assertTrue(options['no_phpstan'])
         self.assertEqual('v1.0.0', options['since'])
 
     def test_everything_unexpected_is_refused(self):
@@ -295,7 +296,7 @@ class ValidationTest(unittest.TestCase):
             {'plugin': 'blocks/foreign'}, {'plugin': '../x'}, {'focus': 'everything'},
             {'only': ['Z']}, {'only': 'A'}, {'only': ['A; rm -rf /']}, {'only': [1]},
             {'since': '--help'}, {'since': '-x'}, {'since': 'v9.9.9'}, {'since': '$(id)'},
-            {'since': 'v1.0.0; ls'}, {'with_tests': 'yes'}, {'no_verify': 1},
+            {'since': 'v1.0.0; ls'}, {'with_tests': 'yes'}, {'no_verify': 1}, {'no_phpstan': 'sim'},
             {'full': True},  # only valid for the quality focus
             {'model': 'x'}, {'argv': ['ls']}, {'cmd': 'ls'},
         ]
@@ -315,9 +316,9 @@ class ValidationTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {'MDT_PANEL_AUDIT_CMD': '/x/audit'}):
             argv = panel_runs.build_argv(self.check({
                 'focus': 'quality', 'only': ['A'], 'since': 'v1.0.0', 'with_tests': True,
-                'no_verify': True}))
+                'no_verify': True, 'no_phpstan': True}))
         self.assertEqual(['/x/audit', 'blocks/demo', '--focus', 'quality', '--json', '--only', 'A',
-                          '--since', 'v1.0.0', '--with-tests', '--no-verify'], argv)
+                          '--since', 'v1.0.0', '--with-tests', '--no-verify', '--no-phpstan'], argv)
 
 
 class QueueTest(unittest.TestCase):
