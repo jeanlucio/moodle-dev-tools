@@ -891,7 +891,7 @@ moodle-security-audit blocks/playerhud --focus quality --full         # qualidad
 |---|---|---|
 | `--model` | `claude-fable-5-1` | Modelo primário |
 | `--fallback-model` | `claude-opus-5-5` | Usado se o primário falhar (ex.: créditos do Fable esgotados) |
-| `--phpstan-level N` | `6` | Nível do PHPStan |
+| `--phpstan-level N` | `6` | Nível do PHPStan (0 a 9; o painel tem um seletor) |
 | `--batch-lines N` | `10000` | Orçamento de linhas por lote |
 | `--jobs N` | `5` | Chamadas de IA em paralelo |
 | `--with-moodlecheck` | — | Roda também o `local_moodlecheck` (PHPDoc; release, não segurança) |

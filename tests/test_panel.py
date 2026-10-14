@@ -283,6 +283,7 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual('all', options['focus'])
         self.assertEqual([], options['only'])
         self.assertFalse(options['with_tests'])
+        self.assertEqual(6, options['phpstan_level'])
 
     def test_a_full_request_is_accepted(self):
         options = self.check({'focus': 'security', 'only': ['A', 'B'], 'since': 'v1.0.0',
@@ -297,12 +298,21 @@ class ValidationTest(unittest.TestCase):
             {'only': ['Z']}, {'only': 'A'}, {'only': ['A; rm -rf /']}, {'only': [1]},
             {'since': '--help'}, {'since': '-x'}, {'since': 'v9.9.9'}, {'since': '$(id)'},
             {'since': 'v1.0.0; ls'}, {'with_tests': 'yes'}, {'no_verify': 1}, {'no_phpstan': 'sim'},
+            {'phpstan_level': 10}, {'phpstan_level': -1}, {'phpstan_level': '6'}, {'phpstan_level': True},
+            {'phpstan_level': 6.0},
             {'full': True},  # only valid for the quality focus
             {'model': 'x'}, {'argv': ['ls']}, {'cmd': 'ls'},
         ]
         for payload in bad:
             with self.subTest(payload=payload), self.assertRaises(panel_runs.ValidationError):
                 self.check(payload)
+
+    def test_a_non_default_phpstan_level_reaches_the_command(self):
+        with mock.patch.dict(os.environ, {'MDT_PANEL_AUDIT_CMD': '/x/audit'}):
+            argv = panel_runs.build_argv(self.check({'phpstan_level': 8}))
+            default = panel_runs.build_argv(self.check({}))
+        self.assertEqual(['--phpstan-level', '8'], argv[-2:])
+        self.assertNotIn('--phpstan-level', default)
 
     def test_full_is_valid_for_the_quality_focus(self):
         self.assertTrue(self.check({'focus': 'quality', 'full': True})['full'])

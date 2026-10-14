@@ -27,12 +27,15 @@ TOOLS_DIR = Path(__file__).resolve().parent
 PANEL_DIR = TOOLS_DIR / '.panel'
 RUNS_DIR = PANEL_DIR / 'runs'
 RUNNER = TOOLS_DIR / 'panel_runner.py'
-OPTIONS = ('plugin', 'focus', 'only', 'since', 'full', 'with_tests', 'no_verify', 'no_phpstan')
+OPTIONS = ('plugin', 'focus', 'only', 'since', 'full', 'with_tests', 'no_verify', 'no_phpstan',
+           'phpstan_level')
 FLAGS = ('full', 'with_tests', 'no_verify', 'no_phpstan')
 FLAG_ARGS = {'full': '--full', 'with_tests': '--with-tests', 'no_verify': '--no-verify',
              'no_phpstan': '--no-phpstan'}
 ACTIVE = ('queued', 'running')
 MAX_GROUPS = 20
+PHPSTAN_LEVELS = range(0, 10)
+DEFAULT_PHPSTAN_LEVEL = 6
 
 
 class ValidationError(ValueError):
@@ -82,8 +85,13 @@ def validate(payload, public=None):
     if flags['full'] and focus != 'quality':
         raise ValidationError('--full só vale no foco qualidade')
 
+    level = payload.get('phpstan_level', DEFAULT_PHPSTAN_LEVEL)
+    # bool is an int in Python, so it has to be refused by hand.
+    if isinstance(level, bool) or not isinstance(level, int) or level not in PHPSTAN_LEVELS:
+        raise ValidationError('nível do PHPStan deve ser um inteiro de 0 a 9')
+
     return {'plugin': plugin['path'], 'component': plugin['component'], 'focus': focus,
-            'only': list(only), 'since': since, **flags}
+            'only': list(only), 'since': since, 'phpstan_level': level, **flags}
 
 
 def build_argv(options):
@@ -97,6 +105,8 @@ def build_argv(options):
     for flag in FLAGS:
         if options[flag]:
             argv.append(FLAG_ARGS[flag])
+    if options['phpstan_level'] != DEFAULT_PHPSTAN_LEVEL:
+        argv += ['--phpstan-level', str(options['phpstan_level'])]
     return argv
 
 

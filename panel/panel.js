@@ -205,6 +205,7 @@ const runOptions = () => {
         with_tests: $('with-tests').checked,
         no_verify: $('no-verify').checked,
         no_phpstan: $('no-phpstan').checked && focus !== 'security',
+        phpstan_level: Number($('phpstan-level').value),
     };
 };
 
@@ -213,6 +214,7 @@ const syncRunForm = () => {
     $('full-choice').hidden = focus !== 'quality';
     // The security focus never runs PHPStan, so there is nothing to skip.
     $('no-phpstan').disabled = focus === 'security';
+    $('phpstan-level').disabled = focus === 'security' || $('no-phpstan').checked;
     $('no-phpstan-text').textContent = focus === 'security'
         ? 'PHPStan: a rodada de segurança já não o usa'
         : 'Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)';
