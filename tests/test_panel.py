@@ -166,6 +166,22 @@ class DataTest(unittest.TestCase):
             self.assertEqual(2, groups['A']['files'])
             self.assertEqual(1, groups['B']['files'])
 
+    def test_groups_are_listed_by_name_but_still_claim_files_in_config_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, plugin = make_public(tmp)
+            (plugin / 'classes' / 'ai').mkdir()
+            (plugin / 'classes' / 'ai' / 'b.php').write_text('<?php\necho 1;\n')
+            config = plugin / '.plans' / 'security-audit' / 'config.json'
+            # The broad group C comes after D on purpose: it would otherwise take D's files.
+            config.write_text(json.dumps({'ignore': [], 'groups': {
+                'A': ['*.php'], 'E10': ['templates/'], 'D': ['classes/ai/'], 'E2': ['amd/'],
+                'C': ['classes/']}}))
+            groups = panel_data.groups_info(plugin)
+            self.assertEqual(['A', 'C', 'D', 'E2', 'E10'], [g['name'] for g in groups])
+            by_name = {g['name']: g for g in groups}
+            self.assertEqual(1, by_name['D']['files'])
+            self.assertEqual(1, by_name['C']['files'])
+
     def test_a_tests_group_shows_its_real_size_and_says_it_reads_tests(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, plugin = make_public(tmp)

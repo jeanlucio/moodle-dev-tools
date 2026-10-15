@@ -215,11 +215,20 @@ def group_coverage(directory, names, test_groups=()):
     return found
 
 
+def natural_key(name):
+    """Sort key that reads digits as numbers, so E2 comes before E10 and T1 before T2."""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', name)]
+
+
 def groups_info(directory):
     """The configured groups with their size, last audit and whether the security scope is closed.
 
     The sizes count tests/ too, so a tests group shows what naming it would read; `tests` tells the
     reader that the group reads tests/ (which a run skips otherwise, because it costs more quota).
+
+    The list is sorted by name for reading. The order of config.json is not: there, the first group
+    that matches a file takes it, so a broad group such as `classes/` has to come after the narrower
+    ones, and the sizes below are computed in that order before the list is sorted.
     """
     import security_audit
     config = audit_scope.load_config(directory)
@@ -233,7 +242,7 @@ def groups_info(directory):
     return [{'name': name, 'files': len(entries), 'lines': sum(e['lines'] for e in entries),
              'closed': audit_focus.is_closed(directory, name), 'tests': name in test_groups,
              'last': coverage[name]['last'], 'ignored': coverage[name]['ignored']}
-            for name, entries in assigned.items()]
+            for name, entries in sorted(assigned.items(), key=lambda item: natural_key(item[0]))]
 
 
 def groups_summary(directory):
