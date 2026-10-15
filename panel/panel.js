@@ -201,7 +201,8 @@ const runOptions = () => {
         focus,
         only: [...document.querySelectorAll('#groups input:checked')].map((box) => box.value),
         since: scope === 'since' ? $('since').value : null,
-        full: scope === 'full',
+        // The quality focus reads only what changed since the last tag unless told to read it all.
+        full: focus === 'quality' && scope === 'default',
         with_tests: $('with-tests').checked,
         no_verify: $('no-verify').checked,
         no_phpstan: $('no-phpstan').checked && focus !== 'security',
@@ -209,30 +210,14 @@ const runOptions = () => {
     };
 };
 
-// The focus the form showed the last time it was synced, so a change to the quality focus can
-// pick its default scope once instead of overriding the reader's later choice.
-let syncedFocus = '';
-
 const syncRunForm = () => {
     const focus = $('run-form').elements.focus.value;
-    if (focus === 'quality' && syncedFocus !== 'quality') {
-        // A quality run reads the whole plugin unless told otherwise.
-        $('run-form').elements.scope.value = 'full';
-    }
-    syncedFocus = focus;
-    $('full-choice').hidden = focus !== 'quality';
     // The security focus never runs PHPStan, so there is nothing to skip.
     $('no-phpstan').disabled = focus === 'security';
     $('phpstan-level').disabled = focus === 'security' || $('no-phpstan').checked;
     $('no-phpstan-text').textContent = focus === 'security'
         ? 'PHPStan: a rodada de segurança já não o usa'
         : 'Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)';
-    if (focus !== 'quality' && $('run-form').elements.scope.value === 'full') {
-        $('run-form').elements.scope.value = 'default';
-    }
-    $('scope-default-label').textContent = focus === 'quality'
-        ? 'Padrão: o que mudou desde a última tag'
-        : 'Padrão: o plugin (ou os grupos marcados)';
     $('since').disabled = $('run-form').elements.scope.value !== 'since';
     clearTimeout(estimateTimer);
     estimateTimer = setTimeout(updateEstimate, ESTIMATE_DELAY_MS);
@@ -267,7 +252,6 @@ const openRunDialog = async (plugin, preset = {}) => {
     $('run-title').textContent = `Auditar ${plugin.component}`;
     $('run-error').hidden = true;
     $('run-form').reset();
-    syncedFocus = '';
     if (preset.focus) {
         $('run-form').elements.focus.value = preset.focus;
     }

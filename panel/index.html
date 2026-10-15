@@ -54,7 +54,7 @@
         <label class="choice"><input type="radio" name="focus" value="security">
           <span><strong>Segurança</strong><small>Só vulnerabilidades, com nota própria. Sem PHPStan.</small></span></label>
         <label class="choice"><input type="radio" name="focus" value="quality">
-          <span><strong>Qualidade</strong><small>Qualidade, conformidade e boa prática. Por padrão lê só o que mudou desde a última tag.</small></span></label>
+          <span><strong>Qualidade</strong><small>Qualidade, conformidade e boa prática. Para uma rodada mais barata, use "Só o que mudou desde" a última tag.</small></span></label>
         <label class="choice"><input type="radio" name="focus" value="all" checked>
           <span><strong>Os dois</strong><small>Como antes: os quatro tipos juntos, uma nota só.</small></span></label>
       </fieldset>
@@ -65,12 +65,10 @@
       <fieldset id="scope-set">
         <legend>Escopo</legend>
         <label class="choice"><input type="radio" name="scope" value="default" checked>
-          <span><strong id="scope-default-label">Padrão</strong></span></label>
+          <span><strong>Plugin inteiro</strong> <small>(ou só os grupos marcados)</small></span></label>
         <label class="choice"><input type="radio" name="scope" value="since">
           <span><strong>Só o que mudou desde</strong>
             <select id="since" aria-label="Tag de referência"></select></span></label>
-        <label class="choice" id="full-choice" hidden><input type="radio" name="scope" value="full">
-          <span><strong>Plugin inteiro</strong><small>Ignora o filtro por tag do foco qualidade.</small></span></label>
       </fieldset>
       <fieldset>
         <legend>Opções</legend>
