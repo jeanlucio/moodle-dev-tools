@@ -34,6 +34,20 @@ GET_STRING_RE = re.compile(
         )""",
     re.VERBOSE,
 )
+# The same literal-arguments shape for `new moodle_exception('errorcode', 'module')`, with or without
+# a leading backslash or the core\exception namespace. The error code is a lang string key: when
+# it does not exist the user sees the raw "module/errorcode" instead of a message.
+EXCEPTION_RE = re.compile(
+    r"""new\s+(?:\\?core\\exception\\|\\)?moodle_exception\s*\(\s*
+        (?P<q1>['"])(?P<key>[^'"]*)(?P=q1)
+        \s*
+        (?:
+            \)
+          |
+            ,\s*(?P<q2>['"])(?P<component>[^'"]*)(?P=q2)\s*(?:[,)])
+        )""",
+    re.VERBOSE,
+)
 STRING_KEY_RE = re.compile(r"""\$string\[\s*['"](?P<key>[a-zA-Z0-9_:]+)['"]\s*\]""")
 
 
@@ -115,6 +129,35 @@ def resolve_lang_file(component: str, own_component: str | None, own_dir: Path,
     return None
 
 
+def resolve_exception_lang_file(component: str, own_component: str | None, own_dir: Path,
+                                moodle_root: Path | None) -> Path | None:
+    """Resolves the module of a moodle_exception to the lang file its error code is read from.
+
+    The constructor turns an empty module, 'moodle' and 'core' into 'error' (core's
+    lang/en/error.php), unlike get_string(), where those mean lang/en/moodle.php.
+
+    @param string $component module argument of the exception, '' when omitted
+    @param string|None $own_component the plugin being checked's own component
+    @param Path $own_dir the plugin being checked's own repository root
+    @param Path|None $moodle_root absolute path to the Moodle public docroot, if known
+    @return Path|None the lang file path, or None when not confidently resolvable
+    """
+    if component in ('', 'core', 'moodle', 'error'):
+        return moodle_root / 'lang' / 'en' / 'error.php' if moodle_root else None
+    return resolve_lang_file(component, own_component, own_dir, moodle_root)
+
+
+def calls(text: str):
+    """Every literal-argument get_string() and moodle_exception call in the source, in order.
+
+    @param string $text the PHP source
+    @return list[tuple] (match, label for messages, lang file resolver) per call
+    """
+    found = [(m, 'get_string', resolve_lang_file) for m in GET_STRING_RE.finditer(text)]
+    found += [(m, 'moodle_exception', resolve_exception_lang_file) for m in EXCEPTION_RE.finditer(text)]
+    return sorted(found, key=lambda item: item[0].start())
+
+
 def check_file(php_file: Path, own_component: str | None, own_dir: Path,
                 moodle_root: Path | None) -> list[str]:
     """Checks one PHP file, returning a list of human-readable problem descriptions.
@@ -129,7 +172,7 @@ def check_file(php_file: Path, own_component: str | None, own_dir: Path,
     problems = []
     lang_cache: dict[Path, set] = {}
 
-    for match in GET_STRING_RE.finditer(text):
+    for match, label, resolve in calls(text):
         key = match.group('key')
         if is_interpolated(match.group('q1'), key):
             continue
@@ -139,7 +182,7 @@ def check_file(php_file: Path, own_component: str | None, own_dir: Path,
             continue
         component = component_raw or 'core'
 
-        lang_file = resolve_lang_file(component, own_component, own_dir, moodle_root)
+        lang_file = resolve(component, own_component, own_dir, moodle_root)
         if lang_file is None or not lang_file.is_file():
             continue  # Unresolvable or genuinely absent on this host — skip, don't guess.
 
@@ -149,7 +192,7 @@ def check_file(php_file: Path, own_component: str | None, own_dir: Path,
         if key not in lang_cache[lang_file]:
             line = text.count('\n', 0, match.start()) + 1
             problems.append(
-                f"{php_file}:{line}: get_string('{key}', '{component}') — chave não existe "
+                f"{php_file}:{line}: {label}('{key}', '{component}') — chave não existe "
                 f"em {lang_file}"
             )
     return problems
@@ -180,7 +223,7 @@ def main(argv: list[str]) -> int:
         print(problem)
 
     if all_problems:
-        print(f'\n{len(all_problems)} chamada(s) de get_string() com chave inexistente.', file=sys.stderr)
+        print(f'\n{len(all_problems)} chamada(s) de get_string()/moodle_exception com chave inexistente.', file=sys.stderr)
         return 1
 
     return 0

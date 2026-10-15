@@ -27,7 +27,7 @@ O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
 só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, db-strings, get_string, capability-exists, template/module-names, duplicate-tables, redundant-indexes, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, db-strings, lang-placeholders, backup-support, get_string, capability-exists, template/module-names, duplicate-tables, redundant-indexes, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -35,7 +35,9 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
 | **db-strings** | `db/caches.php`, `db/messages.php` ou `lang/en/*.php` staged | Todo cache de `db/caches.php` tem `$string['cachedef_<nome>']` e todo provedor de `db/messages.php` tem `$string['messageprovider:<nome>']` | Sim |
-| **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` com os dois argumentos literais aponta pra uma string que existe de verdade | Sim |
+| **lang-placeholders** | `lang/*/*.php` staged | Toda string traduzida usa os mesmos placeholders (`{$a}`, `{$a->nome}`) que a string em inglês de mesma chave | Sim |
+| **backup-support** | `lib.php` ou `backup/` staged, em atividade (`mod_*`) | `FEATURE_BACKUP_MOODLE2` declarado em `<mod>_supports()` ⇔ `backup/moodle2/backup_<mod>_activity_task.class.php` e `restore_…` existem | Sim |
+| **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` e todo `new moodle_exception('chave', 'componente')` com argumentos literais aponta pra uma string que existe de verdade | Sim |
 | **capability-exists** | `.php` staged | Toda chamada `has_capability()`/`require_capability()` com argumento literal referencia uma capability que existe de verdade | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
@@ -126,6 +128,31 @@ Notas:
   contra o ecossistema em 15/10/2026, achou 3 faltando (`local_playergames`, `local_pluginsview`,
   `mod_quickpoll`). Testado nos 486 plugins montados em `web-1` (45 com esses arquivos): só esses 3
   e 2 genuínos no `tiny_widgethub` (terceiro), zero falso-positivo.
+- **lang-placeholders** (`check_lang_placeholders.py`) compara cada `lang/<idioma>/` com o `lang/en/`
+  de mesmo nome, nas chaves presentes nos dois. Tradução que perde o `{$a}` perde o valor
+  ("Respondida por estudantes"); a que usa um `{$a->nome}` que o inglês não passa (ou com nome
+  errado) mostra o placeholder literal. Valor que não é literal simples (concatenação, heredoc) é
+  pulado; chave que falta de um lado não é assunto deste gate. Origem: `moodle-plugin-validate` do
+  Eduardo Kraus (15/10/2026). Zero violação nos plugins próprios (479 strings com placeholder);
+  nos 54 plugins montados em `web-1` com tradução própria, 2 achados genuínos, ambos na tradução
+  khmer do `mod_interactivevideo` (terceiro). O leitor pega 49.827 das 49.840 linhas `$string[` de
+  `en`/`pt_br` do site; as 13 restantes são concatenações, puladas de propósito.
+- **backup-support** (`check_backup_support.py`) lê o que `<mod>_supports()` responde para
+  `FEATURE_BACKUP_MOODLE2` nas formas usadas no ecossistema (`switch` com `case` encadeado até um
+  `return` comum, array, `match`, `$features[...] = ...`); qualquer valor que não seja
+  `true`/`false`/`null` é pulado. Declarado sem `backup/moodle2/backup_<mod>_activity_task.class.php`
+  e `restore_…`: o backup do curso falha, e apagar a atividade com a lixeira ativa também. Arquivos
+  presentes sem a declaração: a atividade fica fora de todo backup e duplicação, sem erro. O nome
+  exige o sufixo `.class.php` porque é o único que o core carrega (`backup_plan_builder.class.php`).
+  Origem: mesma ferramenta, que achou o caso no `mod_quickpoll`; nos 43 módulos montados, um achado
+  genuíno no `mod_videoprogress` (terceiro: arquivos sem `.class` no nome, nunca carregados).
+- **get_string** também cobre `new moodle_exception('chave', 'componente')` (com ou sem `\` e o
+  namespace `core\exception`) desde 15/10/2026. O construtor procura a chave em `lang/en/error.php`
+  do core quando o componente é omitido, `moodle` ou `core` (não em `moodle.php`, como o
+  `get_string()`); chave inexistente mostra ao usuário o código cru `componente/chave`. Primeira
+  varredura: `errorgeneral` no `block_playerhud` e `invalidparameter` (que é de `debug.php`) no
+  `local_resourcestats`, além de um `get_string('noinstances', 'moodle')` no `mod_codereview`
+  anterior ao próprio gate.
 - **redundant-indexes** (`check_redundant_indexes.py`): o Moodle já cria um índice para toda chave
   (a primária tem o seu; para `unique`, `foreign` e `foreign-unique` o gerador de DDL acrescenta o
   índice, `lib/ddl/sql_generator.php`, `getCreateTableSQL()`). Um `<INDEX>` com os mesmos campos

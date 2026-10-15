@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + capability-strings + db-strings + redundant-indexes + static-checks + ESLint +
-# Stylelint + lint Mustache + gherkinlint (gates determinísticos) e revisão IA paralela em PHP, JS,
-# Mustache, CSS e XML. Cada gate só roda se houver arquivo staged do seu tipo.
+# Pre-commit: PHPCS + capability-strings + db-strings + lang-placeholders + backup-support +
+# redundant-indexes + static-checks + ESLint + Stylelint + lint Mustache + gherkinlint (gates
+# determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver
+# arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
@@ -155,15 +156,52 @@ if [ -n "$DBSTR_TRIGGER" ] && [ -f version.php ] && [ -f "$DBSTR_CHECKER" ]; the
 fi
 
 # ------------------------------------------------------------------ #
-#  get_string() — toda chamada com chave e componente literais       #
-#  precisa apontar pra uma string que existe de verdade.              #
+#  lang-placeholders — toda string traduzida usa os mesmos {$a} do   #
+#  inglês: placeholder a menos perde o valor, a mais (ou com nome    #
+#  errado, {$a->nome}) aparece literal na tela.                       #
+# ------------------------------------------------------------------ #
+LANGPH_TRIGGER=$(echo "$PHP_STAGED" | grep -E '(^|/)lang/[^/]+/[^/]+\.php$')
+LANGPH_CHECKER="$MDT_DIR/check_lang_placeholders.py"
+if [ -n "$LANGPH_TRIGGER" ] && [ -f version.php ] && [ -f "$LANGPH_CHECKER" ]; then
+    echo "lang-placeholders: verificando..."
+    if ! python3 "$LANGPH_CHECKER" "$(pwd)"; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: tradução com placeholders diferentes do inglês (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "lang-placeholders: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  backup-support — atividade (mod_*) que declara FEATURE_BACKUP_    #
+#  MOODLE2 tem as classes de backup/moodle2/, e quem tem as classes  #
+#  declara a feature. Sem isso, o backup falha (ou deixa a atividade #
+#  de fora) sem erro nenhum até alguém fazer um backup de verdade.   #
+# ------------------------------------------------------------------ #
+BACKUP_TRIGGER=$(echo "$PHP_STAGED" | grep -E '^lib\.php$|^backup/')
+BACKUP_CHECKER="$MDT_DIR/check_backup_support.py"
+if [ -n "$BACKUP_TRIGGER" ] && [ -f version.php ] && [ -f "$BACKUP_CHECKER" ]; then
+    echo "backup-support: verificando..."
+    if ! python3 "$BACKUP_CHECKER" "$(pwd)"; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: backup declarado e arquivos de backup em desacordo (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "backup-support: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  get_string() e moodle_exception — toda chamada com chave e        #
+#  componente literais precisa apontar pra uma string que existe.   #
 # ------------------------------------------------------------------ #
 GETSTRING_CHECKER="$MDT_DIR/check_get_string.py"
 if [ -n "$PHP_STAGED" ] && [ -f version.php ] && [ -f "$GETSTRING_CHECKER" ]; then
     echo "get_string: verificando..."
     if ! python3 "$GETSTRING_CHECKER" "$(pwd)" $PHP_STAGED; then
         echo "--------------------------------------------------------------"
-        echo "  Commit bloqueado: get_string() com chave inexistente (veja acima)."
+        echo "  Commit bloqueado: get_string()/moodle_exception com chave inexistente (veja acima)."
         echo "--------------------------------------------------------------"
         exit 1
     fi
