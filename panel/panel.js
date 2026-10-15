@@ -209,8 +209,17 @@ const runOptions = () => {
     };
 };
 
+// The focus the form showed the last time it was synced, so a change to the quality focus can
+// pick its default scope once instead of overriding the reader's later choice.
+let syncedFocus = '';
+
 const syncRunForm = () => {
     const focus = $('run-form').elements.focus.value;
+    if (focus === 'quality' && syncedFocus !== 'quality') {
+        // A quality run reads the whole plugin unless told otherwise.
+        $('run-form').elements.scope.value = 'full';
+    }
+    syncedFocus = focus;
     $('full-choice').hidden = focus !== 'quality';
     // The security focus never runs PHPStan, so there is nothing to skip.
     $('no-phpstan').disabled = focus === 'security';
@@ -258,6 +267,7 @@ const openRunDialog = async (plugin, preset = {}) => {
     $('run-title').textContent = `Auditar ${plugin.component}`;
     $('run-error').hidden = true;
     $('run-form').reset();
+    syncedFocus = '';
     if (preset.focus) {
         $('run-form').elements.focus.value = preset.focus;
     }
