@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit: PHPCS + capability-strings + static-checks + ESLint + Stylelint + lint Mustache +
-# gherkinlint (gates determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só
-# roda se houver arquivo staged do seu tipo.
+# Pre-commit: PHPCS + capability-strings + db-strings + redundant-indexes + static-checks + ESLint +
+# Stylelint + lint Mustache + gherkinlint (gates determinísticos) e revisão IA paralela em PHP, JS,
+# Mustache, CSS e XML. Cada gate só roda se houver arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
 # ~/.phpcs-ai.env) com o Claude CLI local (roda contra a assinatura Claude Code, não
 # API paga) quando o binário "claude" está no PATH.
@@ -136,6 +136,25 @@ if [ -n "$CAP_TRIGGER" ] && [ -f version.php ] && [ -f "$CAP_CHECKER" ]; then
 fi
 
 # ------------------------------------------------------------------ #
+#  db-strings — todo cache de db/caches.php e todo provedor de       #
+#  db/messages.php tem a string que o core monta em runtime          #
+#  (cachedef_<nome>, messageprovider:<nome>). O gate de get_string   #
+#  não as vê: o core nunca chama get_string com a chave literal.     #
+# ------------------------------------------------------------------ #
+DBSTR_TRIGGER=$(echo "$PHP_STAGED" | grep -E '(^|/)db/(caches|messages)\.php$|(^|/)lang/en/[^/]+\.php$')
+DBSTR_CHECKER="$MDT_DIR/check_db_strings.py"
+if [ -n "$DBSTR_TRIGGER" ] && [ -f version.php ] && [ -f "$DBSTR_CHECKER" ]; then
+    echo "db-strings: verificando..."
+    if ! python3 "$DBSTR_CHECKER" "$(pwd)"; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: cache ou provedor de mensagem sem string de lang (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "db-strings: OK"
+fi
+
+# ------------------------------------------------------------------ #
 #  get_string() — toda chamada com chave e componente literais       #
 #  precisa apontar pra uma string que existe de verdade.              #
 # ------------------------------------------------------------------ #
@@ -182,6 +201,24 @@ if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$DUPTABLE_CHECKER" ]; then
         exit 1
     fi
     echo "duplicate-tables: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  redundant-indexes — nenhum INDEX do install.xml repete os campos  #
+#  de uma KEY da mesma tabela: o Moodle já cria índice para toda     #
+#  chave, e o INDEX vira um segundo índice igual no banco.            #
+# ------------------------------------------------------------------ #
+REDUNDANTIDX_CHECKER="$MDT_DIR/check_redundant_indexes.py"
+if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$REDUNDANTIDX_CHECKER" ]; then
+    echo "redundant-indexes: verificando..."
+    if ! python3 "$REDUNDANTIDX_CHECKER" $DUPTABLE_TRIGGER; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: índice repetindo chave no install.xml (veja acima)."
+        echo "  Em plugin publicado, a remoção precisa de passo de upgrade (drop_index)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "redundant-indexes: OK"
 fi
 
 # ------------------------------------------------------------------ #

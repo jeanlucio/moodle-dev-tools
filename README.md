@@ -27,13 +27,14 @@ O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
 só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, get_string, capability-exists, template/module-names, duplicate-tables, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, db-strings, get_string, capability-exists, template/module-names, duplicate-tables, redundant-indexes, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
 | **php -l** | `.php` staged | Sintaxe. PHPCS/moodlecheck checam estilo/PHPDoc, não *parse* — um erro de sintaxe passaria batido até o CI (`moodle-plugin-ci phplint`) | Sim |
 | **PHPCS** | `.php` staged | Padrão Moodle completo (~60ms por arquivo) | Sim |
 | **capability-strings** | `db/access.php` ou `lang/en/*.php` staged | Toda capability em `db/access.php` tem string de lang correspondente (`mod/x:cap` → `$string['x:cap']`) | Sim |
+| **db-strings** | `db/caches.php`, `db/messages.php` ou `lang/en/*.php` staged | Todo cache de `db/caches.php` tem `$string['cachedef_<nome>']` e todo provedor de `db/messages.php` tem `$string['messageprovider:<nome>']` | Sim |
 | **get_string** | `.php` staged | Toda chamada `get_string('chave', 'componente')` com os dois argumentos literais aponta pra uma string que existe de verdade | Sim |
 | **capability-exists** | `.php` staged | Toda chamada `has_capability()`/`require_capability()` com argumento literal referencia uma capability que existe de verdade | Sim |
 | **ESLint** | `.js` staged | ESLint do Moodle com `--max-warnings 0` (espelha o `--max-lint-warnings 0` do CI) | Sim |
@@ -41,6 +42,7 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
 | **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
 | **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
+| **redundant-indexes** | `db/install.xml` staged | Nenhum `<INDEX>` repete, na mesma ordem, os campos de uma `<KEY>` da mesma tabela (o Moodle já cria índice para toda chave) | Sim |
 | **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
 | **modern-js** | `amd/src/*.js` staged | Roda no ESLint do Moodle as regras `no-var`, `prefer-const`, `prefer-arrow-callback`, `prefer-template`, `eqeqeq` e `promise/prefer-await-to-then` e bloqueia só as violações em linhas que o commit **adiciona ou altera** (código antigo vizinho não bloqueia) | Sim (`SKIP_MODERN_JS=1` para uma edição consciente de código antigo) |
 | **static-checks** | `.php`/`.xml` staged, plugin com `version.php` | `moodle-static-checks` restrito ao commit: coluna do `install.xml` fora do backup, tabela que nada apaga, campo de formulário sem `maxlength` para a coluna, `substr()` cortando em tamanho de coluna, preferência fora do Privacy Provider, token com `uniqid()`/`rand()`. Violações de arquivo só aparecem se o arquivo está staged; as de schema só se o commit toca `db/`, `backup/`, `lib.php`, privacidade ou um arquivo de limpeza/observer | Não por padrão (só avisa); `MDT_STATIC_CHECKS_MODE=block` bloqueia, `SKIP_STATIC_CHECKS=1` ignora |
@@ -113,6 +115,28 @@ Notas:
   XML de verdade (`xml.etree.ElementTree`), não regex, já que `install.xml` é XML de verdade.
   Zero achado nos 110 plugins reais (esperado — é um erro raro), mas o teste com um caso
   quebrado de propósito confirma que pega quando existe.
+- **db-strings** (`check_db_strings.py`) cobre as strings que o core monta em runtime a partir das
+  chaves dos arrays de `db/caches.php` (`'cachedef_' . $area`, `cache/classes/definition.php`) e de
+  `db/messages.php` (`'messageprovider:' . $name`, `message/renderer.php`). Como nunca há um
+  `get_string()` literal com essas chaves, o gate de `get_string` não as enxerga, e a falta só
+  aparece como `[[cachedef_x]]` na página de caches ou `[[messageprovider:x]]` nas preferências de
+  notificação. Lê só o **primeiro nível** do array (as definições aninham arrays próprios, como
+  `'defaults' => [...]` e `'invalidationevents' => [...]`, cujas chaves são opções, não nomes) e
+  pula chave que não seja literal. Origem: o `moodle-plugin-validate` do Eduardo Kraus, rodado
+  contra o ecossistema em 15/10/2026, achou 3 faltando (`local_playergames`, `local_pluginsview`,
+  `mod_quickpoll`). Testado nos 486 plugins montados em `web-1` (45 com esses arquivos): só esses 3
+  e 2 genuínos no `tiny_widgethub` (terceiro), zero falso-positivo.
+- **redundant-indexes** (`check_redundant_indexes.py`): o Moodle já cria um índice para toda chave
+  (a primária tem o seu; para `unique`, `foreign` e `foreign-unique` o gerador de DDL acrescenta o
+  índice, `lib/ddl/sql_generator.php`, `getCreateTableSQL()`). Um `<INDEX>` com os mesmos campos
+  vira um segundo índice igual no banco: confirmado no `web-1`, onde `mdl_playerwords` tinha dois
+  índices em `course`. O arquivo é válido e instala sem erro, por isso nenhuma outra ferramenta
+  local pegava. Compara os campos **na ordem** (índice em `(a, b)` não é redundante com chave em
+  `(b, a)`); índice `UNIQUE` sobre chave `foreign` recebe a sugestão de trocar a chave para
+  `foreign-unique`. Mesma origem do `db-strings`: 10 casos em 6 plugins do ecossistema. Testado nos
+  121 `install.xml` de `web-1` e no `lib/db/install.xml` do core: só esses 10. Dispara só com
+  `install.xml` staged, de propósito: é quando o plugin já vai precisar de passo de upgrade
+  (`drop_index`) para remover o índice extra num site instalado.
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).
