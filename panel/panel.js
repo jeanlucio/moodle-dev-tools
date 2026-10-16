@@ -89,10 +89,6 @@ const auditCell = (audit, grades) => {
         return chips;
     };
     // A focused run grades only one side; the other side keeps the last run that graded it, with its own date.
-    if (quality && security && quality.file === security.file) {
-        return h('div', {}, gradeChips(quality, 'Qual'), gradeChips(security, 'Seg'),
-            h('small', {}, quality.date));
-    }
     const lines = [];
     if (quality) {
         lines.push(h('div', {}, gradeChips(quality, 'Qual'), h('small', {}, quality.date)));
