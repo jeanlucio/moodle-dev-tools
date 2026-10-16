@@ -76,7 +76,7 @@ const formatDuration = (seconds) => {
 
 // ---- plugins ------------------------------------------------------------- //
 
-const auditCell = (audit) => {
+const auditCell = (audit, security) => {
     if (!audit) {
         return h('span', {class: 'hint'}, 'nunca');
     }
@@ -94,7 +94,16 @@ const auditCell = (audit) => {
     if (audit.partial) {
         chips.push(chip('parcial'));
     }
-    return h('div', {}, chips, h('small', {}, audit.date));
+    const lines = [h('div', {}, chips, h('small', {}, audit.date))];
+    // The newest run may not have evaluated security; show the last one that did, with its own date.
+    if (security && security.file !== audit.file) {
+        const secchips = [chip(`Seg ${security.grade}`, gradeTone(security.grade))];
+        if (security.partial) {
+            secchips.push(chip('parcial'));
+        }
+        lines.push(h('div', {}, secchips, h('small', {}, security.date)));
+    }
+    return h('div', {}, lines);
 };
 
 const groupsLine = (summary) => (summary
@@ -122,7 +131,7 @@ const renderPlugins = () => {
     body.replaceChildren(...state.plugins.map((plugin) => h('tr', {},
         h('td', {}, h('strong', {}, plugin.component), h('small', {}, plugin.path)),
         h('td', {}, plugin.release || plugin.version),
-        h('td', {}, auditCell(plugin.last_audit), groupsLine(plugin.groups_summary)),
+        h('td', {}, auditCell(plugin.last_audit, plugin.last_security), groupsLine(plugin.groups_summary)),
         h('td', {}, staticCell(plugin)),
         h('td', {},
             h('button', {type: 'button', class: 'btn', onclick: () => openRunDialog(plugin)}, 'Auditar'),

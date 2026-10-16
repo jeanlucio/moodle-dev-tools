@@ -152,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
         for plugin in panel_data.discover_plugins(self.public):
             directory = panel_data.plugin_dir(plugin, self.public)
             out.append({**plugin, 'last_audit': panel_data.last_audit(directory),
+                        'last_security': panel_data.last_security_audit(directory),
                         'groups_summary': panel_data.groups_summary(directory)})
         return out
 

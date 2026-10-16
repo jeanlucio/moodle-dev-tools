@@ -146,6 +146,28 @@ def last_audit(directory):
     return parse_report(files[0]) if files else None
 
 
+def security_grade(report):
+    """The security grade a report carries, or '' when it did not evaluate security."""
+    if report['grade'].lower().startswith('inconclusiva'):
+        return ''
+    if report['focus'] == 'security':
+        return report['grade']
+    return report['security_grade']
+
+
+def last_security_audit(directory):
+    """The newest report with a security grade, even when later runs only covered quality.
+
+    The returned report has `grade` set to the security grade, so the panel can show it as is.
+    """
+    for path in report_files(directory):
+        report = parse_report(path)
+        grade = security_grade(report)
+        if grade:
+            return {**report, 'grade': grade}
+    return None
+
+
 def reports(directory):
     return [parse_report(path) for path in report_files(directory)]
 

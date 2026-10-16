@@ -149,6 +149,35 @@ class DataTest(unittest.TestCase):
             self.assertEqual(('A', 'security', '2026-10-14'),
                              (audit['grade'], audit['focus'], audit['date']))
 
+    def test_the_last_security_grade_survives_a_newer_quality_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, plugin = make_public(tmp)
+            folder = plugin / '.plans' / 'security-audit'
+            (folder / 'block_demo-2026-10-15-120000.md').write_text(
+                '# Relatório\n\n## Nota geral\n\n# B+\n\n'
+                '> **Foco: qualidade.** Segurança não foi avaliada.\n')
+            self.assertEqual('quality', panel_data.last_audit(plugin)['focus'])
+            security = panel_data.last_security_audit(plugin)
+            self.assertEqual(('A', '2026-10-14'), (security['grade'], security['date']))
+
+    def test_a_general_report_supplies_its_own_security_grade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, plugin = make_public(tmp)
+            folder = plugin / '.plans' / 'security-audit'
+            general = ('# Relatório\n\n## Nota geral\n\n# B\n\n'
+                       'Nota contando só os achados de segurança: **A+**\n')
+            (folder / 'block_demo-2026-10-16-120000.md').write_text(general)
+            security = panel_data.last_security_audit(plugin)
+            self.assertEqual(('A+', '2026-10-16'), (security['grade'], security['date']))
+
+    def test_an_inconclusive_security_run_is_not_a_security_grade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, plugin = make_public(tmp)
+            folder = plugin / '.plans' / 'security-audit'
+            (folder / 'block_demo-2026-10-16-120000.md').write_text(
+                REPORT.replace('# A', '# inconclusiva', 1))
+            self.assertEqual('2026-10-14', panel_data.last_security_audit(plugin)['date'])
+
     def test_a_report_is_read_only_by_its_plain_file_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, plugin = make_public(tmp)
