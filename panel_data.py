@@ -6,6 +6,7 @@ the ones that are git repositories), the grades from the audit reports in each p
 """
 
 import functools
+import json
 import os
 import re
 import subprocess
@@ -146,26 +147,43 @@ def last_audit(directory):
     return parse_report(files[0]) if files else None
 
 
-def security_grade(report):
-    """The security grade a report carries, or '' when it did not evaluate security."""
-    if report['grade'].lower().startswith('inconclusiva'):
+def _sidecar_quality_grade(path):
+    """Quality-only grade of a general run, from the findings stored beside its report."""
+    import security_audit
+    try:
+        data = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
+        _, others = audit_focus.split_by_security(data['confirmed'])
+    except (OSError, ValueError, KeyError, TypeError):
         return ''
-    if report['focus'] == 'security':
-        return report['grade']
-    return report['security_grade']
+    return security_audit.compute_grade(others)[0]
 
 
-def last_security_audit(directory):
-    """The newest report with a security grade, even when later runs only covered quality.
+def last_grades(directory):
+    """The newest report that graded quality and the newest that graded security.
 
-    The returned report has `grade` set to the security grade, so the panel can show it as is.
+    A general run grades both; a focused run grades only its own side, so the other side comes from
+    an earlier report. Inconclusive runs grade nothing. Each entry is that report with `grade` set
+    to the grade of that side, or None when no report has graded it.
     """
+    found = {'quality': None, 'security': None}
     for path in report_files(directory):
         report = parse_report(path)
-        grade = security_grade(report)
-        if grade:
-            return {**report, 'grade': grade}
-    return None
+        if report['grade'].lower().startswith('inconclusiva'):
+            continue
+        grades = {'quality': '', 'security': ''}
+        if report['focus'] == 'security':
+            grades['security'] = report['grade']
+        elif report['focus'] == 'quality':
+            grades['quality'] = report['grade']
+        else:
+            grades['security'] = report['security_grade']
+            grades['quality'] = _sidecar_quality_grade(path)
+        for side, grade in grades.items():
+            if grade and found[side] is None:
+                found[side] = {**report, 'grade': grade}
+        if all(found.values()):
+            break
+    return found
 
 
 def reports(directory):

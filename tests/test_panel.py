@@ -149,34 +149,41 @@ class DataTest(unittest.TestCase):
             self.assertEqual(('A', 'security', '2026-10-14'),
                              (audit['grade'], audit['focus'], audit['date']))
 
-    def test_the_last_security_grade_survives_a_newer_quality_run(self):
+    def test_each_side_keeps_the_last_run_that_graded_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, plugin = make_public(tmp)
             folder = plugin / '.plans' / 'security-audit'
             (folder / 'block_demo-2026-10-15-120000.md').write_text(
                 '# Relatório\n\n## Nota geral\n\n# B+\n\n'
                 '> **Foco: qualidade.** Segurança não foi avaliada.\n')
-            self.assertEqual('quality', panel_data.last_audit(plugin)['focus'])
-            security = panel_data.last_security_audit(plugin)
-            self.assertEqual(('A', '2026-10-14'), (security['grade'], security['date']))
+            grades = panel_data.last_grades(plugin)
+            self.assertEqual(('B+', '2026-10-15'), (grades['quality']['grade'], grades['quality']['date']))
+            self.assertEqual(('A', '2026-10-14'), (grades['security']['grade'], grades['security']['date']))
 
-    def test_a_general_report_supplies_its_own_security_grade(self):
+    def test_a_general_run_grades_quality_from_its_findings_and_security_from_its_header(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, plugin = make_public(tmp)
             folder = plugin / '.plans' / 'security-audit'
-            general = ('# Relatório\n\n## Nota geral\n\n# B\n\n'
-                       'Nota contando só os achados de segurança: **A+**\n')
-            (folder / 'block_demo-2026-10-16-120000.md').write_text(general)
-            security = panel_data.last_security_audit(plugin)
-            self.assertEqual(('A+', '2026-10-16'), (security['grade'], security['date']))
+            name = 'block_demo-2026-10-16-120000'
+            (folder / f'{name}.md').write_text(
+                '# Relatório\n\n## Nota geral\n\n# B+\n\n'
+                'Nota contando só os achados de segurança: **A+**\n')
+            findings = [{'finding_type': 'quality', 'severity': 'medium'}]
+            (folder / f'{name}.json').write_text(json.dumps({'confirmed': findings}))
+            grades = panel_data.last_grades(plugin)
+            self.assertEqual('A+', grades['security']['grade'])
+            self.assertEqual(('B+', '2026-10-16'), (grades['quality']['grade'], grades['quality']['date']))
+            self.assertEqual(grades['quality']['file'], grades['security']['file'])
 
-    def test_an_inconclusive_security_run_is_not_a_security_grade(self):
+    def test_an_inconclusive_run_grades_neither_side(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, plugin = make_public(tmp)
             folder = plugin / '.plans' / 'security-audit'
             (folder / 'block_demo-2026-10-16-120000.md').write_text(
                 REPORT.replace('# A', '# inconclusiva', 1))
-            self.assertEqual('2026-10-14', panel_data.last_security_audit(plugin)['date'])
+            grades = panel_data.last_grades(plugin)
+            self.assertEqual('2026-10-14', grades['security']['date'])
+            self.assertIsNone(grades['quality'])
 
     def test_a_report_is_read_only_by_its_plain_file_name(self):
         with tempfile.TemporaryDirectory() as tmp:

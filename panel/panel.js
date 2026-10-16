@@ -76,32 +76,29 @@ const formatDuration = (seconds) => {
 
 // ---- plugins ------------------------------------------------------------- //
 
-const auditCell = (audit, security) => {
+const auditCell = (audit, grades) => {
     if (!audit) {
         return h('span', {class: 'hint'}, 'nunca');
     }
-    const chips = [];
-    if (audit.focus === 'security') {
-        chips.push(chip(`Seg ${audit.grade}`, gradeTone(audit.grade)));
-    } else if (audit.focus === 'quality') {
-        chips.push(chip(`Qual ${audit.grade}`, gradeTone(audit.grade)));
-    } else {
-        chips.push(chip(`Geral ${audit.grade}`, gradeTone(audit.grade)));
-        if (audit.security_grade) {
-            chips.push(chip(`Seg ${audit.security_grade}`, gradeTone(audit.security_grade)));
+    const {quality, security} = grades;
+    const gradeChips = (report, label) => {
+        const chips = [chip(`${label} ${report.grade}`, gradeTone(report.grade))];
+        if (report.partial) {
+            chips.push(chip('parcial'));
         }
+        return chips;
+    };
+    // A focused run grades only one side; the other side keeps the last run that graded it, with its own date.
+    if (quality && security && quality.file === security.file) {
+        return h('div', {}, gradeChips(quality, 'Qual'), gradeChips(security, 'Seg'),
+            h('small', {}, quality.date));
     }
-    if (audit.partial) {
-        chips.push(chip('parcial'));
+    const lines = [];
+    if (quality) {
+        lines.push(h('div', {}, gradeChips(quality, 'Qual'), h('small', {}, quality.date)));
     }
-    const lines = [h('div', {}, chips, h('small', {}, audit.date))];
-    // The newest run may not have evaluated security; show the last one that did, with its own date.
-    if (security && security.file !== audit.file) {
-        const secchips = [chip(`Seg ${security.grade}`, gradeTone(security.grade))];
-        if (security.partial) {
-            secchips.push(chip('parcial'));
-        }
-        lines.push(h('div', {}, secchips, h('small', {}, security.date)));
+    if (security) {
+        lines.push(h('div', {}, gradeChips(security, 'Seg'), h('small', {}, security.date)));
     }
     return h('div', {}, lines);
 };
@@ -131,7 +128,7 @@ const renderPlugins = () => {
     body.replaceChildren(...state.plugins.map((plugin) => h('tr', {},
         h('td', {}, h('strong', {}, plugin.component), h('small', {}, plugin.path)),
         h('td', {}, plugin.release || plugin.version),
-        h('td', {}, auditCell(plugin.last_audit, plugin.last_security), groupsLine(plugin.groups_summary)),
+        h('td', {}, auditCell(plugin.last_audit, plugin.last_grades), groupsLine(plugin.groups_summary)),
         h('td', {}, staticCell(plugin)),
         h('td', {},
             h('button', {type: 'button', class: 'btn', onclick: () => openRunDialog(plugin)}, 'Auditar'),
