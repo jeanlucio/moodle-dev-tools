@@ -68,6 +68,9 @@ const chip = (text, tone = '') => h('span', {class: `chip ${tone}`.trim()}, text
 
 const formatDate = (epoch) => (epoch ? new Date(epoch * 1000).toLocaleString('pt-BR') : '—');
 
+// Report dates arrive as YYYY-MM-DD; show them the Brazilian way.
+const formatReportDate = (date) => date.split('-').reverse().join('/');
+
 const formatDuration = (seconds) => {
     const total = Math.max(0, Math.round(seconds));
     const minutes = Math.floor(total / 60);
@@ -75,6 +78,25 @@ const formatDuration = (seconds) => {
 };
 
 // ---- plugins ------------------------------------------------------------- //
+
+// One report as chips, for the group rows, where each row is a single run.
+const reportCell = (audit) => {
+    const chips = [];
+    if (audit.focus === 'security') {
+        chips.push(chip(`Seg ${audit.grade}`, gradeTone(audit.grade)));
+    } else if (audit.focus === 'quality') {
+        chips.push(chip(`Qual ${audit.grade}`, gradeTone(audit.grade)));
+    } else {
+        chips.push(chip(`Geral ${audit.grade}`, gradeTone(audit.grade)));
+        if (audit.security_grade) {
+            chips.push(chip(`Seg ${audit.security_grade}`, gradeTone(audit.security_grade)));
+        }
+    }
+    if (audit.partial) {
+        chips.push(chip('parcial'));
+    }
+    return h('div', {}, chips, h('small', {}, formatReportDate(audit.date)));
+};
 
 const auditCell = (audit, grades) => {
     if (!audit) {
@@ -91,10 +113,10 @@ const auditCell = (audit, grades) => {
     // A focused run grades only one side; the other side keeps the last run that graded it, with its own date.
     const lines = [];
     if (quality) {
-        lines.push(h('div', {}, gradeChips(quality, 'Qual'), h('small', {}, quality.date)));
+        lines.push(h('div', {}, gradeChips(quality, 'Qual'), h('small', {}, formatReportDate(quality.date))));
     }
     if (security) {
-        lines.push(h('div', {}, gradeChips(security, 'Seg'), h('small', {}, security.date)));
+        lines.push(h('div', {}, gradeChips(security, 'Seg'), h('small', {}, formatReportDate(security.date))));
     }
     return h('div', {}, lines);
 };
@@ -445,10 +467,10 @@ const cancelRun = async (id) => {
 const groupRow = (plugin, group) => {
     const last = group.last;
     const lastCell = last
-        ? h('div', {}, auditCell(last), last.scope === 'plugin' ? chip('plugin inteiro') : null)
+        ? h('div', {}, reportCell(last), last.scope === 'plugin' ? chip('plugin inteiro') : null)
         : h('span', {class: 'hint'}, 'nunca auditado');
     const ignored = group.ignored
-        ? h('small', {class: 'ignored'}, `Relatório de ${group.ignored.date} não conta: ${group.ignored.reason}.`)
+        ? h('small', {class: 'ignored'}, `Relatório de ${formatReportDate(group.ignored.date)} não conta: ${group.ignored.reason}.`)
         : null;
     return h('tr', {},
         h('td', {}, h('strong', {}, group.name), group.tests ? h('small', {}, 'lê tests/') : null),
@@ -558,7 +580,7 @@ const openReports = async (plugin, preferred) => {
     const detail = await api(`/api/plugin?path=${encodeURIComponent(plugin.path)}`);
     const select = $('report-select');
     select.replaceChildren(...detail.reports.map((report) => h('option', {value: report.file},
-        `${report.date} — ${report.grade || '?'} (${FOCUS_LABELS[report.focus] || report.focus})`
+        `${formatReportDate(report.date)} — ${report.grade || '?'} (${FOCUS_LABELS[report.focus] || report.focus})`
         + (report.partial ? ' parcial' : ''))));
     select.onchange = () => showReport(plugin, select.value);
     $('report-body').replaceChildren();
