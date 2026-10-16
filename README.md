@@ -524,7 +524,7 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 └── prepare-commit-msg      ← symlink → geração de mensagem de commit com IA
 
 ~/.local/bin/
-├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin)
+├── moodle-coverage         ← symlink → coverage.sh (cobertura de testes por plugin; usa coverage_report.py)
 ├── moodle-check-schema     ← symlink → check-schema.sh (drift de schema vs install.xml)
 ├── moodle-upgrade          ← symlink → upgrade.sh (upgrade nos containers configurados + check de schema)
 ├── moodle-phpstan          ← symlink → phpstan.sh (análise estática com extensão Moodle)
@@ -551,32 +551,66 @@ echo "responda apenas: ok" | python3 ~/.moodle-dev-tools/phpcs-ai-call.py \
 ## Cobertura de testes — `moodle-coverage`
 
 Mede a cobertura de testes de **um** plugin Moodle de forma repetível, dentro do container de
-desenvolvimento (com Xdebug). Substitui o processo manual de montar um `phpunit.xml` à mão,
-rodar com `XDEBUG_MODE=coverage` e limpar depois. O `install.sh` cria o symlink
-`~/.local/bin/moodle-coverage`.
+desenvolvimento (com Xdebug), e imprime um relatório por arquivo e por função. Substitui o
+processo manual de montar um `phpunit.xml` à mão, rodar com `XDEBUG_MODE=coverage` e limpar
+depois. O `install.sh` cria o symlink `~/.local/bin/moodle-coverage`.
 
 ```bash
-moodle-coverage <tipo/nome> [--html] [--filter <subpath>]
+moodle-coverage <tipo/nome> [--html] [--filter <subpath>] [--credited | --compare]
 ```
 
 | Exemplo | Efeito |
 |---|---|
-| `moodle-coverage blocks/playerhud` | Tabela de cobertura por classe no terminal |
-| `moodle-coverage local/playergames --html` | Gera também relatório navegável em `~/coverage-reports/<frankenstyle>/` |
+| `moodle-coverage mod/playergroup` | Escopo completo do plugin, medição **executada** (o padrão) |
+| `moodle-coverage mod/playergroup --html` | Gera também o relatório navegável em `~/coverage-reports/<frankenstyle>/` |
+| `moodle-coverage blocks/playerhud --compare` | Executada **x** creditada por `@covers`, lado a lado (2 rodadas) |
+| `moodle-coverage blocks/playerhud --credited` | Só a creditada por `@covers` (o comportamento da primeira versão) |
 | `moodle-coverage blocks/playerhud --filter classes/controller` | Escopa a medição a uma subpasta |
 
-O script recebe só o `tipo/nome` (ex.: `blocks/playerhud`) e deriva o resto — frankenstyle,
-`classes/`, `tests/` — montando o `phpunit.xml` temporário escopado ao plugin. Aceita também o
+O script recebe só o `tipo/nome` (ex.: `blocks/playerhud`) e deriva o resto. Aceita também o
 caminho do host (`html/public/blocks/playerhud`); o prefixo é removido.
+
+### O que o relatório mostra
+
+O `<source>` é o **plugin inteiro menos exclusões explícitas**, e todo arquivo PHP cai numa
+classe, para que nada suma do relatório em silêncio:
+
+| Classe | Como é detectada | No relatório |
+|---|---|---|
+| **Lógica** | `classes/`, `lib.php`, `mod_form.php`, `backup/`, `db/upgrade.php`... | Conta no percentual, por arquivo e por função |
+| **Entry point** | O arquivo chama `require(...config.php)` (`view.php`, `index.php`, `export.php`) | Fora do percentual: o PHPUnit não os carrega. Listados com o tamanho e as features Behat existentes |
+| **Declarativo** | `db/access.php`, `services.php`, `events.php`, `mobile.php`, `messages.php`... | "Carregado" ou "NUNCA carregado" por algum teste. Carregado não é testado |
+| **Fora do escopo** | `tests/`, `cli/`, `lang/`, `amd/`, `templates/`, bibliotecas de `thirdpartylibs.xml` | Listado com o motivo |
+| **Não medível** | `amd/src`, `yui/src`, `js/`, templates Mustache | Só contagem de arquivos e linhas: dependem de Behat ou de teste de JavaScript |
+
+Há ainda a lista **"funções e métodos nunca executados por nenhum teste"**, que inclui as funções
+procedurais do `lib.php` (a tabela por classe da primeira versão não as mostrava).
+
+### Medição executada x creditada
+
+O PHPUnit só credita a um teste as linhas que a anotação `@covers` (ou `#[CoversClass]`) lista;
+o que o teste executa sem estar listado é descartado. Isso subestima a cobertura: um plugin cujo
+`lib.php` aparecia a 62% estava a 83% de fato. Por isso o padrão é a medição **executada**: os
+testes rodam numa **cópia** em `/tmp` do container, sem `@covers`/`@uses` (o repositório não é
+alterado e a cópia some ao final). O PHPUnit 10 e 11 não tem opção que desligue esse filtro, então
+a cópia é o único caminho sem mexer nos testes.
+
+Use `--compare` para ver as duas medições e a diferença por arquivo, que mostra onde os testes
+exercitam código sem declará-lo. `--credited` roda os testes como estão.
+
+O relatório é montado por `coverage_report.py` a partir do relatório XML do PHPUnit
+(`--coverage-xml`), não do HTML. O `--html` serve para ver as linhas descobertas.
 
 ### Pré-requisitos e notas de ambiente
 
 - Roda no container de desenvolvimento (`meu-moodle-web-1` por padrão, no topo do script) com
   **Xdebug** disponível e o ambiente PHPUnit inicializado (`admin/tool/phpunit/cli/init.php`).
+  O caminho do plugin no host vem de `MDT_MOODLE_PUBLIC` em `~/.moodle-dev-tools.env`.
 - Usa `memory_limit=-1`: a instrumentação de cobertura do Xdebug consome muito mais memória
   que uma rodada normal, e o teto padrão do CLI faz suítes grandes **segfaultar**.
 - `--filter` ajusta o `<source>` do `phpunit.xml` (não a flag `--coverage-filter`, que em
-  PHPUnit 10+ apenas soma ao include em vez de restringir).
+  PHPUnit 10+ apenas soma ao include em vez de restringir). A suíte inteira roda do mesmo
+  jeito; o filtro só restringe o que é medido.
 - É **ferramenta de bancada**: não vai no ZIP do Plugin Directory e não altera o código-fonte.
   A medição completa mesmo quando a suíte reporta warnings/deprecations inofensivas (ex.:
   doc-comment metadata em plugins 4.5+5.0); uma nota final separa "medição-ok-com-avisos" de
