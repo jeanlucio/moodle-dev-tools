@@ -10,6 +10,7 @@ reason. That folder is gitignored in every plugin, so it never ships in the Plug
 
     {"backup_columns": {"table.column": "why it is not backed up", "table": "why"},
      "delete_cleanup": {"table": "why nothing deletes it"},
+     "reset_userdata": {"modname": "why a course reset has nothing to clear"},
      "column_lengths": {"classes/form/x.php:field": "why", "classes/y.php": "why"},
      "user_preferences": {"block_x_pref": "why"},
      "weak_random": {"classes/z.php": "why"}}
@@ -322,6 +323,31 @@ def delete_cleanup(plugin_dir, accepted=None):
     return violations
 
 
+def reset_userdata(plugin_dir, accepted=None):
+    """A mod_* with per-student tables that has no <modname>_reset_userdata() for "Reset course"."""
+    accepted = (accepted if accepted is not None else load_accepted(plugin_dir)).get(
+        'reset_userdata', {})
+    component = re.search(r"\$plugin->component\s*=\s*'(\w+)'", read(plugin_dir / 'version.php'))
+    if not component or not component.group(1).startswith('mod_'):
+        return []
+    modname = component.group(1)[len('mod_'):]
+    if modname in accepted:
+        return []
+    # A table with a userid holds per-student rows; the tables that hang from it are cleared with it.
+    studenttables = [table for table, columns in install_tables(plugin_dir).items()
+                     if 'userid' in columns]
+    if not studenttables:
+        return []
+    # Only this function is required: it is the one core calls. The form pair
+    # (_reset_course_form_definition/_defaults) is only needed when the reset is an option the
+    # teacher ticks; a reset driven by the core's own options (groups, enrolments) has none.
+    lib = strip_comments(read(plugin_dir / 'lib.php'))
+    if re.search(r'function\s+' + re.escape(f'{modname}_reset_userdata') + r'\s*\(', lib):
+        return []
+    return [{'modname': modname, 'tables': studenttables,
+             'file': 'db/install.xml', 'line': install_line(plugin_dir, studenttables[0])}]
+
+
 def _text_fields(source):
     """(field literal, dynamic?, options text, offset) of each text addElement() in a form."""
     fields = []
@@ -461,6 +487,24 @@ SPECS = {
                           'delete_data_for_all_users_in_context() do Privacy Provider). Tabela '
                           'puramente de log pode ir para accepted.json com o motivo.',
     },
+    ('reset_userdata', None): {
+        'sweep_pattern': (
+            'Rode `moodle-static-checks <tipo/nome> --check reset_userdata` em cada `mod_*` com tabela por estudante; um teste que redefine o curso pelo `reset_course_userdata()` real confirma que o core descobre o gancho.'),
+        'title': 'Atividade com dados por estudante que não participa de "Redefinir curso"',
+        'finding_type': 'best_practice', 'severity': 'low', 'category': 'core_api_misuse',
+        'rule_id': 'L4-VER-2',
+        'description': 'O plugin guarda linhas por estudante (tabela com userid) mas não define '
+                       '<modname>_reset_userdata(). O core só chama os módulos que definem o '
+                       'gancho: a redefinição apaga conclusão e notas, mas as tentativas ficam, e o '
+                       'estudante rematriculado reaparece como já tendo concluído, com o limite '
+                       'gasto.',
+        'recommendation': 'Definir <modname>_reset_userdata() em lib.php, apagando as tabelas por '
+                          'estudante com a mesma subconsulta do <modname>_delete_instance(); se a '
+                          'limpeza é uma opção do professor, acrescentar também '
+                          '_reset_course_form_definition() e _reset_course_form_defaults() (e '
+                          '_reset_gradebook() se há nota). Se não há o que redefinir, registrar em '
+                          'accepted.json com o motivo.',
+    },
     ('column_lengths', 'form'): {
         'sweep_pattern': (
             'Rode `moodle-static-checks <tipo/nome> --check column_lengths`. Depois confira os caminhos que gravam sem formulário (web services, assistente, importação, chamadas de IA): o valor chega truncado ao tamanho da coluna?'),
@@ -529,6 +573,9 @@ def describe(check, violation):
         if violation['kind'] == 'never_deleted':
             return f"{where}  tabela {violation['table']} nunca é apagada"
         return f"{where}  tabela {violation['table']} é chaveada por curso e não há observer de course_deleted"
+    if check == 'reset_userdata':
+        return (f"{where}  tabela por estudante ({violation['tables'][0]}) e falta "
+                f"{violation['modname']}_reset_userdata() para 'Redefinir curso'")
     if check == 'column_lengths':
         if violation['kind'] == 'form':
             return f"{where}  campo '{violation['field']}' sem maxlength {violation['limit']}"
@@ -541,6 +588,7 @@ def describe(check, violation):
 CHECKS = {
     'backup_columns': backup_columns,
     'delete_cleanup': delete_cleanup,
+    'reset_userdata': reset_userdata,
     'column_lengths': column_lengths,
     'user_preferences': user_preferences,
     'weak_random': weak_random,

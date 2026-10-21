@@ -27,7 +27,7 @@ def resolve(plugin):
 
 # Files whose change can introduce a schema-level violation (a column the backup misses, a table
 # nothing deletes), so those two checks only speak up when the commit touches one of them.
-SCHEMA_CHECKS = ('backup_columns', 'delete_cleanup')
+SCHEMA_CHECKS = ('backup_columns', 'delete_cleanup', 'reset_userdata')
 SCHEMA_PATHS = ('db/', 'backup/', 'classes/privacy/', 'lib.php')
 SCHEMA_WORDS = ('delete', 'cleanup', 'observer', 'purge', 'uninstall')
 

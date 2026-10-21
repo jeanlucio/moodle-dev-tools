@@ -410,5 +410,74 @@ class AuditIntegrationTest(unittest.TestCase):
             found = audit_checks.check_core_table_writes(root, [{'rel': 'classes/keys.php', 'lines': 2}])
         self.assertEqual(['L4-API-1'], [f['rule_id'] for f in found])
 
+
+RESET_INSTALL = INSTALL.replace('<FIELD NAME="label"', '<FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>\n'
+                                '        <FIELD NAME="label"')
+RESET_LIB = """<?php
+function demo_reset_course_form_definition($mform) {}
+function demo_reset_course_form_defaults($course) { return []; }
+function demo_reset_userdata($data) { return []; }
+"""
+
+
+class ResetUserdataTest(unittest.TestCase):
+    def found(self, root):
+        return schema.reset_userdata(root)
+
+    def test_a_mod_with_student_tables_and_no_reset_userdata_is_found(self):
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'version.php': VERSION,
+                                 'lib.php': "<?php\nfunction demo_supports($f) {}\n"})
+        with tmp:
+            found = self.found(root)
+        self.assertEqual(1, len(found))
+        self.assertEqual('demo', found[0]['modname'])
+        self.assertEqual(['demo_items'], found[0]['tables'])
+
+    def test_reset_userdata_alone_is_enough(self):
+        # A reset driven by the core's own options has no form of its own to define.
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'version.php': VERSION,
+                                 'lib.php': "<?php\nfunction demo_reset_userdata($data) { return []; }\n"})
+        with tmp:
+            self.assertEqual([], self.found(root))
+
+    def test_the_full_set_is_clean(self):
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'version.php': VERSION, 'lib.php': RESET_LIB})
+        with tmp:
+            self.assertEqual([], self.found(root))
+
+    def test_a_function_only_in_a_comment_does_not_count(self):
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'version.php': VERSION,
+                                 'lib.php': "<?php\n// function demo_reset_userdata($data) {}\n"})
+        with tmp:
+            self.assertEqual(1, len(self.found(root)))
+
+    def test_a_form_function_without_reset_userdata_is_still_found(self):
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'version.php': VERSION,
+                                 'lib.php': "<?php\nfunction demo_reset_course_form_definition($m) {}\n"})
+        with tmp:
+            self.assertEqual(1, len(self.found(root)))
+
+    def test_a_mod_without_student_tables_is_not_asked_for_a_reset(self):
+        tmp, root = make_plugin({'db/install.xml': INSTALL, 'version.php': VERSION, 'lib.php': "<?php\n"})
+        with tmp:
+            self.assertEqual([], self.found(root))
+
+    def test_only_activities_take_part_in_the_course_reset(self):
+        tmp, root = make_plugin({'db/install.xml': RESET_INSTALL, 'lib.php': "<?php\n",
+                                 'version.php': "<?php\n$plugin->component = 'local_demo';\n"})
+        with tmp:
+            self.assertEqual([], self.found(root))
+
+    def test_an_accepted_reason_silences_it_but_a_blank_one_does_not(self):
+        files = {'db/install.xml': RESET_INSTALL, 'version.php': VERSION, 'lib.php': "<?php\n"}
+        tmp, root = make_plugin({**files, schema.ACCEPTED_REL: json.dumps(
+            {'reset_userdata': {'demo': 'keeps nothing a teacher could reset'}})})
+        with tmp:
+            self.assertEqual([], self.found(root))
+        tmp, root = make_plugin({**files, schema.ACCEPTED_REL: json.dumps({'reset_userdata': {'demo': ' '}})})
+        with tmp:
+            self.assertEqual(1, len(self.found(root)))
+
+
 if __name__ == '__main__':
     unittest.main()

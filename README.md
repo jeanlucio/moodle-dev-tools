@@ -177,6 +177,15 @@ Notas:
   21/10/2026, 7 de 8 atividades do ecossistema com o sufixo faltando e 3 com a regra impossível de
   desligar. Comentários e literais são ignorados antes da busca. Testes:
   `tests/test_completion_form.py`.
+- **reset_userdata** (`static_schema.py`, parte do `moodle-static-checks`): em `mod_*` com tabela
+  por estudante (coluna `userid`), exige `<modname>_reset_userdata()` em `lib.php`. O core só chama
+  os módulos que definem o gancho; sem ele "Redefinir curso" apaga conclusão e notas mas deixa as
+  tentativas, e o estudante rematriculado reaparece como já tendo concluído, com o limite gasto. O
+  par `_reset_course_form_definition`/`_defaults` só é necessário quando a limpeza é uma caixa do
+  professor, então não é exigido (o `mod_playergroup` segue as opções do próprio core). Exceção
+  deliberada: `accepted.json` com o motivo. Origem: relatório do `mod_playerpuzzle` de 20/10/2026;
+  7 de 12 atividades do ecossistema sem o gancho. Como os outros checks de `static-checks`, roda em
+  modo aviso até `MDT_STATIC_CHECKS_MODE=block`.
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).
