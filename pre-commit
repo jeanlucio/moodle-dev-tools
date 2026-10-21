@@ -284,7 +284,7 @@ fi
 #  install.xml fora do backup, tabela que nada apaga, campo sem       #
 #  maxlength para a coluna, preferência fora do Privacy Provider,     #
 #  token com uniqid()/rand(). Só mostra o que diz respeito ao commit. #
-#  Começa como AVISO; MDT_STATIC_CHECKS_MODE=block passa a bloquear.  #
+#  Avisa por padrão; MDT_STATIC_CHECKS_MODE=block bloqueia (ver .env). #
 #  Exceção deliberada: <plugin>/.plans/security-audit/accepted.json.  #
 # ------------------------------------------------------------------ #
 STATIC_CHECKER="$MDT_DIR/static_checks.py"

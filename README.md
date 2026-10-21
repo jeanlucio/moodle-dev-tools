@@ -47,7 +47,7 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **redundant-indexes** | `db/install.xml` staged | Nenhum `<INDEX>` repete, na mesma ordem, os campos de uma `<KEY>` da mesma tabela (o Moodle já cria índice para toda chave) | Sim |
 | **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
 | **modern-js** | `amd/src/*.js` staged | Roda no ESLint do Moodle as regras `no-var`, `prefer-const`, `prefer-arrow-callback`, `prefer-template`, `eqeqeq` e `promise/prefer-await-to-then` e bloqueia só as violações em linhas que o commit **adiciona ou altera** (código antigo vizinho não bloqueia) | Sim (`SKIP_MODERN_JS=1` para uma edição consciente de código antigo) |
-| **static-checks** | `.php`/`.xml` staged, plugin com `version.php` | `moodle-static-checks` restrito ao commit: coluna do `install.xml` fora do backup, tabela que nada apaga, campo de formulário sem `maxlength` para a coluna, `substr()` cortando em tamanho de coluna, preferência fora do Privacy Provider, token com `uniqid()`/`rand()`. Violações de arquivo só aparecem se o arquivo está staged; as de schema só se o commit toca `db/`, `backup/`, `lib.php`, privacidade ou um arquivo de limpeza/observer | Não por padrão (só avisa); `MDT_STATIC_CHECKS_MODE=block` bloqueia, `SKIP_STATIC_CHECKS=1` ignora |
+| **static-checks** | `.php`/`.xml` staged, plugin com `version.php` | `moodle-static-checks` restrito ao commit: coluna do `install.xml` fora do backup, tabela que nada apaga, campo de formulário sem `maxlength` para a coluna, `substr()` cortando em tamanho de coluna, preferência fora do Privacy Provider, token com `uniqid()`/`rand()`. Violações de arquivo só aparecem se o arquivo está staged; as de schema só se o commit toca `db/`, `backup/`, `lib.php`, privacidade ou um arquivo de limpeza/observer | Depende de `MDT_STATIC_CHECKS_MODE`: sem a variável só avisa (padrão do repo); `block` bloqueia o commit que introduz a violação (ativo no `~/.moodle-dev-tools.env` desta máquina desde 21/10/2026, com os 27 plugins próprios limpos). Exceção legítima: `.plans/security-audit/accepted.json` com o motivo; `SKIP_STATIC_CHECKS=1` ignora tudo |
 | **Aviso AMD** | `amd/src/*.js` staged | Lembra de rodar `npx grunt amd` se o `amd/build/*.min.js` correspondente não estiver staged | Não (só avisa) |
 
 Notas:
@@ -184,8 +184,8 @@ Notas:
   par `_reset_course_form_definition`/`_defaults` só é necessário quando a limpeza é uma caixa do
   professor, então não é exigido (o `mod_playergroup` segue as opções do próprio core). Exceção
   deliberada: `accepted.json` com o motivo. Origem: relatório do `mod_playerpuzzle` de 20/10/2026;
-  7 de 12 atividades do ecossistema sem o gancho. Como os outros checks de `static-checks`, roda em
-  modo aviso até `MDT_STATIC_CHECKS_MODE=block`.
+  7 de 12 atividades do ecossistema sem o gancho. Como os outros checks de `static-checks`, bloqueia
+  ou só avisa conforme `MDT_STATIC_CHECKS_MODE` (veja a tabela dos gates).
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).
