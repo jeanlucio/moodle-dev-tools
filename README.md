@@ -164,6 +164,19 @@ Notas:
   121 `install.xml` de `web-1` e no `lib/db/install.xml` do core: só esses 10. Dispara só com
   `install.xml` staged, de propósito: é quando o plugin já vai precisar de passo de upgrade
   (`drop_index`) para remover o índice extra num site instalado.
+- **completion-form** (`check_completion_form.py`): em todo `mod_form.php` staged que define
+  `add_completion_rules()`, **bloqueia** se esse método (ou `completion_rule_enabled()`) não usa
+  `$this->get_suffix()`: a página "Conclusão padrão da atividade" renderiza o mesmo formulário com o
+  sufixo `_<modname>` e remove a regra cujo nome não o tem (`completion/classes/edit_base_form.php`),
+  só com um aviso de desenvolvedor. Com o sufixo vazio do formulário normal nada parece errado, por
+  isso nenhum teste ou outra ferramenta pegava. **Avisa** (não bloqueia) quando não há
+  `data_postprocessing()`: o navegador não envia checkbox desmarcada nem campo desativado, e o
+  professor não consegue desligar a regra depois de configurada. O aviso some se o formulário só usa
+  `advcheckbox` ou se o `lib.php` irmão já zera o valor (`if (empty($data->completion...))`), porque
+  esses dois casos são correções legítimas que uma checagem estática só consegue adivinhar. Origem:
+  21/10/2026, 7 de 8 atividades do ecossistema com o sufixo faltando e 3 com a regra impossível de
+  desligar. Comentários e literais são ignorados antes da busca. Testes:
+  `tests/test_completion_form.py`.
 - Achado real: `mod_playervideo` teve dois commits seguidos quebrarem o CI (`stylelint:css`, a
   leg `--all` do `moodle-plugin-ci grunt`) por regras CSS de uma linha só, sem que o hook local
   acusasse nada — motivou a criação deste gate (01/09/2026).

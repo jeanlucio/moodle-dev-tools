@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-commit: PHPCS + capability-strings + db-strings + lang-placeholders + backup-support +
-# redundant-indexes + static-checks + ESLint + Stylelint + lint Mustache + gherkinlint (gates
+# redundant-indexes + completion-form + static-checks + ESLint + Stylelint + lint Mustache + gherkinlint (gates
 # determinísticos) e revisão IA paralela em PHP, JS, Mustache, CSS e XML. Cada gate só roda se houver
 # arquivo staged do seu tipo.
 # A revisão IA combina providers via API (Gemini/Groq/OpenAI-compatible, chave em
@@ -257,6 +257,26 @@ if [ -n "$DUPTABLE_TRIGGER" ] && [ -f "$REDUNDANTIDX_CHECKER" ]; then
         exit 1
     fi
     echo "redundant-indexes: OK"
+fi
+
+# ------------------------------------------------------------------ #
+#  completion-form — add_completion_rules() de um mod_form.php sem    #
+#  get_suffix() nos nomes (a página "Conclusão padrão da atividade"   #
+#  apaga a regra) bloqueia; sem data_postprocessing() só avisa (o     #
+#  professor não consegue desligar a regra depois de configurada).    #
+# ------------------------------------------------------------------ #
+COMPLETIONFORM_CHECKER="$MDT_DIR/check_completion_form.py"
+MODFORM_STAGED=$(echo "$PHP_STAGED" | grep -E '(^|/)mod_form\.php$')
+if [ -n "$MODFORM_STAGED" ] && [ -f "$COMPLETIONFORM_CHECKER" ]; then
+    echo "completion-form: verificando..."
+    # shellcheck disable=SC2086
+    if ! python3 "$COMPLETIONFORM_CHECKER" $MODFORM_STAGED; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: regra de conclusão sem get_suffix() no mod_form.php (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "completion-form: OK"
 fi
 
 # ------------------------------------------------------------------ #
