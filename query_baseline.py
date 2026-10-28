@@ -83,6 +83,10 @@ def resolve_plugin(plugin_arg):
     typedir, _, name = plugin.partition('/')
     if not name:
         raise ValueError('informe o plugin como tipo/nome (ex.: blocks/playerhud)')
+    # TinyMCE plugins live at lib/editor/tiny/plugins/<name> and are named tiny_<name>.
+    tiny_prefix = 'lib/editor/tiny/plugins/'
+    if plugin.startswith(tiny_prefix) and '/' not in plugin[len(tiny_prefix):] and plugin[len(tiny_prefix):]:
+        return plugin, f'tiny_{plugin[len(tiny_prefix):]}'
     plugin_type = 'block' if typedir == 'blocks' else typedir
     fixed_subdirs = {'availability': 'condition'}
     subdir = fixed_subdirs.get(typedir)
