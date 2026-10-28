@@ -15,6 +15,9 @@ from pathlib import Path
 ENV_FILE      = Path.home() / '.phpcs-ai.env'
 STATE_FILE    = Path.home() / '.moodle-plugins-seen.json'
 WEEKLY_FILE   = Path.home() / '.moodle-plugins-weekly.json'
+# Permanent, append-only history (one JSON object per line). Unlike WEEKLY_FILE it is
+# never cleared. To keep it in a backed-up folder, symlink this path to a file there.
+HISTORY_FILE  = Path.home() / '.moodle-plugins-history.jsonl'
 LOG_FILE      = Path.home() / '.moodle-plugins-monitor.log'
 PLUGLIST_URL  = 'https://download.moodle.org/api/1.3/pluglist.php'
 GITHUB_API    = 'https://api.github.com/repos/{owner}/{repo}'
@@ -68,14 +71,8 @@ def save_seen_components(components: set[str]) -> None:
 
 
 def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
-    """Accumulates plugin data for the weekly digest (jeanlucio-github-io/scripts/weekly-digest.py)."""
-    entries: list = []
-    if WEEKLY_FILE.exists():
-        try:
-            entries = json.loads(WEEKLY_FILE.read_text())
-        except Exception:
-            entries = []
-    entries.append({
+    """Accumulates plugin data for the weekly digest and for the permanent history."""
+    entry = {
         'component': plugin['component'],
         'name': plugin['name'],
         'tipo': component_type_label(plugin['component']),
@@ -84,7 +81,23 @@ def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
         'preco_detalhe': pricing.get('detail', ''),
         'link': f'https://moodle.org/plugins/view.php?plugin={plugin["component"]}',
         'detected_at': datetime.datetime.now().isoformat(timespec='seconds'),
-    })
+    }
+
+    # History first: WEEKLY_FILE is wiped every Sunday by weekly-digest.py, so a failure
+    # writing it must never cost the permanent record.
+    try:
+        with HISTORY_FILE.open('a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    except OSError as exc:
+        log(f'  AVISO: não foi possível gravar o histórico: {exc}')
+
+    entries: list = []
+    if WEEKLY_FILE.exists():
+        try:
+            entries = json.loads(WEEKLY_FILE.read_text())
+        except Exception:
+            entries = []
+    entries.append(entry)
     WEEKLY_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2))
 
 
