@@ -425,6 +425,48 @@ class QueueTest(unittest.TestCase):
                             and r['status'] not in panel_runs.ACTIVE and r)
         self.assertEqual('inconclusive', done['status'])
 
+    def inconclusive_run(self):
+        run = panel_runs.enqueue(self.opts, self.runs)
+        run.update(status='inconclusive', finished=time.time(), exit_code=2)
+        panel_runs.write_run(run, self.runs)
+        return run
+
+    def test_resuming_an_inconclusive_run_queues_the_same_audit_again(self):
+        old = self.inconclusive_run()
+        new = panel_runs.resume(old['id'], self.public, self.runs)
+        self.assertEqual('queued', new['status'])
+        self.assertNotEqual(old['id'], new['id'])
+        self.assertEqual(old['options'], new['options'])
+        self.assertEqual(old['argv'], new['argv'])
+        self.assertEqual(new['id'], panel_runs.read_run(old['id'], self.runs)['resumed_by'])
+
+    def test_a_run_can_be_resumed_only_once(self):
+        old = self.inconclusive_run()
+        panel_runs.resume(old['id'], self.public, self.runs)
+        with self.assertRaises(panel_runs.ValidationError):
+            panel_runs.resume(old['id'], self.public, self.runs)
+        self.assertEqual(2, len(panel_runs.list_runs(10, self.runs)))
+
+    def test_only_an_inconclusive_run_can_be_resumed(self):
+        for status in ('queued', 'running', 'done', 'failed', 'cancelled', 'lost'):
+            with self.subTest(status=status):
+                run = panel_runs.enqueue(self.opts, self.runs)
+                run.update(status=status)
+                panel_runs.write_run(run, self.runs)
+                with self.assertRaises(panel_runs.ValidationError):
+                    panel_runs.resume(run['id'], self.public, self.runs)
+
+    def test_resuming_an_unknown_run_is_none(self):
+        self.assertIsNone(panel_runs.resume('20260101-000000-abcdef', self.public, self.runs))
+
+    def test_resuming_validates_the_options_again(self):
+        old = self.inconclusive_run()
+        old['options']['only'] = ['gone']
+        panel_runs.write_run(old, self.runs)
+        with self.assertRaises(panel_runs.ValidationError):
+            panel_runs.resume(old['id'], self.public, self.runs)
+        self.assertIsNone(panel_runs.read_run(old['id'], self.runs).get('resumed_by'))
+
     def test_only_one_run_is_active_at_a_time(self):
         self.patch(script(self.tmp.name, SLOW))
         first = panel_runs.enqueue(self.opts, self.runs, now=1000)
@@ -608,6 +650,20 @@ class ServerTest(unittest.TestCase):
         response, body = self.post(f'/api/runs/{run["id"]}/cancel', {}, self.TOKEN)
         self.assertEqual(200, response.status)
         self.assertEqual('cancelled', json.loads(body)['status'])
+
+    def test_an_inconclusive_run_can_be_resumed_over_http(self):
+        run = json.loads(self.post('/api/runs', {'plugin': 'blocks/demo'}, self.TOKEN)[1])
+        stored = panel_runs.read_run(run['id'], self.runs)
+        stored.update(status='inconclusive')
+        panel_runs.write_run(stored, self.runs)
+        response, body = self.post(f'/api/runs/{run["id"]}/resume', {}, self.TOKEN)
+        self.assertEqual(201, response.status)
+        self.assertEqual('queued', json.loads(body)['status'])
+        self.assertEqual(400, self.post(f'/api/runs/{run["id"]}/resume', {}, self.TOKEN)[0].status)
+        self.assertEqual(403, self.post(f'/api/runs/{run["id"]}/resume', {})[0].status)
+
+    def test_resuming_an_unknown_run_over_http_is_a_404(self):
+        self.assertEqual(404, self.post('/api/runs/20260101-000000-abcdef/resume', {}, self.TOKEN)[0].status)
 
     def test_an_unknown_run_is_a_404(self):
         self.assertEqual(404, self.request('GET', '/api/runs/20260101-000000-abcdef')[0].status)

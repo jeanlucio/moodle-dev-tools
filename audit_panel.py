@@ -203,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _public_run(self, run):
         return {k: run.get(k) for k in ('id', 'status', 'options', 'created', 'started',
-                                        'finished', 'exit_code', 'report')}
+                                        'finished', 'exit_code', 'report', 'resumed_by')}
 
     def _run(self, run_id, want_log, query):
         run = panel_runs.read_run(run_id, self.runs_dir)
@@ -252,6 +252,12 @@ class Handler(BaseHTTPRequestHandler):
                 if run is None:
                     return self._error(404, 'execução inexistente')
                 return self._send(200, self._public_run(run))
+            match = re.fullmatch(r'/api/runs/([\w\-]+)/resume', route)
+            if match:
+                run = panel_runs.resume(match.group(1), self.public, self.runs_dir)
+                if run is None:
+                    return self._error(404, 'execução inexistente')
+                return self._send(201, self._public_run(run))
         except panel_runs.ValidationError as exc:
             return self._error(400, str(exc))
         return self._error(404, 'não encontrado')

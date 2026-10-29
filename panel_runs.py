@@ -159,6 +159,28 @@ def enqueue(options, runs_dir=None, now=None):
     return run
 
 
+def resume(run_id, public=None, runs_dir=None):
+    """Queue a new run with the options of an inconclusive one; None when the run does not exist.
+
+    The audit caches every batch and verification it finished, so the new run only pays for what
+    the quota cut off. The options are validated again: the plugin or its groups may have changed
+    since the run was created. The old run keeps its record and points at its successor, so it
+    can be resumed only once.
+    """
+    run = read_run(run_id, runs_dir)
+    if run is None:
+        return None
+    if run['status'] != 'inconclusive':
+        raise ValidationError('só uma execução inconclusiva pode ser retomada')
+    if run.get('resumed_by'):
+        raise ValidationError('esta execução já foi retomada')
+    options = validate({k: v for k, v in run['options'].items() if k != 'component'}, public)
+    successor = enqueue(options, runs_dir)
+    run['resumed_by'] = successor['id']
+    write_run(run, runs_dir)
+    return successor
+
+
 def _log_path(run_id, runs_dir=None):
     return (runs_dir or RUNS_DIR) / f'{run_id}.log'
 

@@ -358,6 +358,10 @@ const runCard = async (run) => {
     if (active) {
         actions.push(h('button', {type: 'button', class: 'btn', onclick: () => cancelRun(run.id)}, 'Cancelar'));
     }
+    if (run.status === 'inconclusive' && !run.resumed_by) {
+        actions.push(h('button', {type: 'button', class: 'btn primary',
+            onclick: () => resumeRun(run.id)}, 'Continuar'));
+    }
     if (run.report) {
         const plugin = state.plugins.find((p) => p.path === run.options.plugin);
         actions.push(h('button', {type: 'button', class: 'btn',
@@ -376,7 +380,10 @@ const runCard = async (run) => {
             metaText(run)),
         progress ? h('div', {class: 'progress'}, progress) : null,
         run.status === 'inconclusive'
-            ? h('div', {class: 'meta'}, 'A cota acabou: o que foi lido ficou em cache, rode de novo depois.') : null,
+            ? h('div', {class: 'meta'}, run.resumed_by
+                ? 'A cota acabou; esta execução já foi retomada em outra.'
+                : 'A cota acabou: o que foi lido ficou em cache. Quando ela renovar, Continuar paga só o que faltou.')
+            : null,
         logText || active ? details : null,
         actions.length ? h('div', {class: 'row-actions'}, actions) : null);
 };
@@ -459,6 +466,15 @@ const tickDurations = () => {
 
 const cancelRun = async (id) => {
     await api(`/api/runs/${id}/cancel`, {method: 'POST', body: {}});
+    await loadRuns();
+};
+
+const resumeRun = async (id) => {
+    try {
+        await api(`/api/runs/${id}/resume`, {method: 'POST', body: {}});
+    } catch (failure) {
+        window.alert(failure.message);
+    }
     await loadRuns();
 };
 

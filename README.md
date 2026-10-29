@@ -1108,8 +1108,11 @@ abra `http://localhost:8765`. Não abre nada no firewall nem passa pelo Caddy.
 antiga começa quando nada está rodando. Cada execução é um arquivo em `.panel/runs/` e roda num
 processo à parte (`panel_runner.py`): **continua se o painel parar**, e o painel a reencontra pelos
 arquivos. Uma execução que sumiu sem registrar o fim é marcada como *perdida*. O código de saída 2 do
-`moodle-security-audit` (cota esgotada) aparece como *inconclusiva*, não como falha. As auditorias são
-as mesmas do terminal, na mesma assinatura do Claude Code.
+`moodle-security-audit` (cota esgotada) aparece como *inconclusiva*, não como falha, e ganha o botão
+**Continuar**: quando a cota renovar, ele enfileira de novo a mesma auditoria (as opções são validadas
+outra vez) e, graças ao cache, a nova rodada paga só o que a cota cortou. Cada execução inconclusiva
+só pode ser retomada uma vez; o painel não adivinha quando a cota volta, então o clique é manual. As
+auditorias são as mesmas do terminal, na mesma assinatura do Claude Code.
 
 **O que impede uma página qualquer de dirigir o servidor:**
 
