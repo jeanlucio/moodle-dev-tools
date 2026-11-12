@@ -398,7 +398,7 @@ def main():
     parser.add_argument('--threshold-pct', type=float, default=50.0)
     parser.add_argument('--no-triage', action='store_true')
     parser.add_argument('--accept', action='store_true')
-    parser.add_argument('--model', default='claude-fable-5-2')
+    parser.add_argument('--model', default='claude-opus-5-5')
     parser.add_argument('--fallback-model', default='claude-opus-5-5')
     parser.add_argument('--jobs', type=int, default=5)
     parser.add_argument('--no-cache', action='store_true')

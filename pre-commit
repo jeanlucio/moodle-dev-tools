@@ -546,10 +546,10 @@ OPENAI4_MAX_TOKENS="${OPENAI4_MAX_TOKENS:-4096}"
 OPENAI5_MAX_TOKENS="${OPENAI5_MAX_TOKENS:-4096}"
 
 # Claude CLI (opcional) — roda contra a assinatura Claude Code (não API paga).
-# Usa Fable por padrão; só cai pra Opus se a chamada do Fable falhar (ex.: sem
-# créditos do Fable no momento). Requer o binário "claude" no PATH e sessão
+# Usa Opus por padrão; o fallback é o mesmo modelo, então não há segunda tentativa.
+# Defina CLAUDE_CLI_MODEL para tentar outro modelo primeiro. Requer o binário "claude" no PATH e sessão
 # logada na máquina que faz o commit. SKIP_CLAUDE_CLI=1 desativa.
-CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-fable-5-2}"
+CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-opus-5-5}"
 CLAUDE_CLI_FALLBACK_MODEL="${CLAUDE_CLI_FALLBACK_MODEL:-claude-opus-5-5}"
 CLAUDE_CLI_AVAILABLE=0
 if [ "${SKIP_CLAUDE_CLI}" != "1" ] && command -v claude >/dev/null 2>&1; then

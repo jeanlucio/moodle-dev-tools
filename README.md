@@ -491,13 +491,14 @@ sem precisar de nenhuma chave em `~/.phpcs-ai.env`. A chamada roda em modo headl
 processo filho tem `ANTHROPIC_API_KEY` (e as flags de Bedrock/Vertex) removidas do
 ambiente antes de rodar, mesmo que essas variáveis existam na sua shell.
 
-Por padrão tenta `claude-fable-5-2`; se essa chamada falhar por qualquer motivo (ex.:
-créditos do Fable esgotados no momento), cai automaticamente para `claude-opus-5-5` — a
-segunda chamada continua contra a assinatura, nunca vira cobrança por token.
+Por padrão usa `claude-opus-5-5`, e o fallback é o mesmo modelo, então não há segunda
+tentativa. Para voltar a tentar um modelo mais caro primeiro (ex.: `claude-fable-5-2`, que
+exige Claude Code 2.1.290 ou mais novo e gasta muito mais cota), defina `CLAUDE_CLI_MODEL`;
+a chamada de fallback continua contra a assinatura, nunca vira cobrança por token.
 
 ```bash
 # ~/.phpcs-ai.env — todas opcionais, já vêm com esses padrões
-CLAUDE_CLI_MODEL=claude-fable-5-2
+CLAUDE_CLI_MODEL=claude-opus-5-5
 CLAUDE_CLI_FALLBACK_MODEL=claude-opus-5-5
 SKIP_CLAUDE_CLI=1   # desativa esse provider mesmo com o binário disponível
 ```
@@ -996,8 +997,8 @@ moodle-security-audit blocks/playerhud --focus quality --full         # qualidad
 
 | Flag | Padrão | Efeito |
 |---|---|---|
-| `--model` | `claude-fable-5-2` | Modelo primário |
-| `--fallback-model` | `claude-opus-5-5` | Usado se o primário falhar (ex.: créditos do Fable esgotados) |
+| `--model` | `claude-opus-5-5` | Modelo primário |
+| `--fallback-model` | `claude-opus-5-5` | Usado se o primário falhar; igual ao primário por padrão, então não há segunda tentativa |
 | `--phpstan-level N` | `6` | Nível do PHPStan (0 a 9; o painel tem um seletor) |
 | `--batch-lines N` | `10000` | Orçamento de linhas por lote |
 | `--jobs N` | `5` | Chamadas de IA em paralelo |
@@ -1231,7 +1232,7 @@ dispara alerta se o baseline se atualiza sozinho a cada rodada.
 | `--threshold-pct N` | `50` | % de aumento para marcar como suspeito |
 | `--no-triage` | — | Só a tabela de números/deltas, sem gastar cota da assinatura |
 | `--accept` | — | Grava os números desta rodada como novo baseline |
-| `--model` | `claude-fable-5-2` | Modelo primário da triagem |
+| `--model` | `claude-opus-5-5` | Modelo primário da triagem |
 | `--fallback-model` | `claude-opus-5-5` | Usado se o primário falhar |
 | `--jobs N` | `5` | Chamadas de triagem em paralelo |
 | `--no-cache` | — | Ignora o cache de triagem |
