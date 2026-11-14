@@ -48,5 +48,37 @@ class ViolationsOnLinesTest(unittest.TestCase):
         self.assertEqual([], check.violations_on_lines(messages, {5}))
 
 
+class HtmlInJsRuleTest(unittest.TestCase):
+    def setUp(self):
+        self.selectors = [option['selector'] for option in check.html_in_js_rule()[1:]]
+
+    def test_the_rule_is_part_of_the_checked_set(self):
+        self.assertIn('no-restricted-syntax', check.RULES)
+        self.assertIn('no-restricted-syntax', check.HINTS)
+
+    def test_it_covers_inner_html_outer_html_and_insert_adjacent_html(self):
+        joined = ' '.join(self.selectors)
+        for name in ('innerHTML', 'outerHTML', 'insertAdjacentHTML'):
+            self.assertIn(name, joined)
+
+    def test_it_covers_template_literals_and_plain_strings(self):
+        joined = ' '.join(self.selectors)
+        self.assertIn('TemplateElement', joined)
+        self.assertIn('Literal', joined)
+
+    def test_no_selector_contains_a_slash_inside_the_regex(self):
+        # esquery reads a regex up to the next slash, so a slash in the pattern would cut it short.
+        self.assertNotIn('/', check.TWO_TAGS)
+
+    def test_the_pattern_needs_two_tags(self):
+        import re
+        # [^] is the JavaScript spelling of "any character"; Python writes it [\s\S].
+        pattern = re.compile(check.TWO_TAGS.replace('[^]', r'[\s\S]'))
+        self.assertIsNone(pattern.search('<i class="fa-solid fa-xmark" aria-hidden="true"></i>'[:-4]))
+        self.assertIsNone(pattern.search('<span aria-hidden="true">&times;'))
+        self.assertIsNotNone(pattern.search('<tbody><tr><td>x</td></tr></tbody>'))
+        self.assertIsNotNone(pattern.search('<div class="a">\n  <select>\n</select></div>'))
+
+
 if __name__ == '__main__':
     unittest.main()

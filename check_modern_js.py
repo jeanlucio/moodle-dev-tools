@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Blocks old-style JavaScript on the lines a commit adds or changes in amd/src.
 
+It also blocks HTML structures built as strings in JavaScript (no-restricted-syntax with the
+selectors below). This is a reviewer recommendation (Moodle HQ, tiny_studiolms issue #4: use a
+Mustache template rendered with core/templates for larger structures), not a written Moodle rule:
+the documentation only shows how to render and sets no limit. The two-tags threshold is this
+project's own heuristic. Only a literal holding two or more tags assigned to innerHTML/outerHTML or
+passed to insertAdjacentHTML counts, so clearing a container, a one-element icon or HTML that
+already came rendered from the server stay allowed.
+
 Moodle's own .eslintrc does not enable no-var, prefer-const, prefer-arrow-callback,
 prefer-template, eqeqeq or promise/prefer-await-to-then, so the regular ESLint gate lets
 old-style code through. Turning those rules on for whole files would block every edit of a
@@ -17,6 +25,31 @@ import re
 import subprocess
 import sys
 
+# Two or more tags in one string: [^] matches newlines too, and esquery regexes cannot hold a slash.
+TWO_TAGS = r'<[A-Za-z][^>]*>[^]*<[A-Za-z]'
+HTML_TARGETS = (
+    "AssignmentExpression[left.property.name=/^(innerHTML|outerHTML)$/]",
+    "CallExpression[callee.property.name='insertAdjacentHTML']",
+)
+HTML_MESSAGE = (
+    'HTML structure built as a string: render a Mustache template with core/templates '
+    '(renderForPromise + replaceNodeContents) instead'
+)
+
+
+def html_in_js_rule() -> list:
+    """Builds the no-restricted-syntax option list that flags multi-tag HTML strings.
+
+    @return list ESLint rule configuration: severity followed by one selector object per case
+    """
+    options: list = ['error']
+    for target in HTML_TARGETS:
+        for node in ('TemplateElement[value.raw', 'Literal[value'):
+            options.append({'selector': f'{target} {node}=/{TWO_TAGS}/]', 'message': HTML_MESSAGE})
+
+    return options
+
+
 RULES = {
     'no-var': 'error',
     'prefer-const': 'error',
@@ -24,6 +57,7 @@ RULES = {
     'prefer-template': 'error',
     'eqeqeq': 'error',
     'promise/prefer-await-to-then': 'error',
+    'no-restricted-syntax': html_in_js_rule(),
 }
 
 HINTS = {
@@ -33,6 +67,7 @@ HINTS = {
     'prefer-template': 'use a template literal instead of string concatenation',
     'eqeqeq': 'use === / !== instead of == / !=',
     'promise/prefer-await-to-then': 'use async/await instead of .then()',
+    'no-restricted-syntax': HTML_MESSAGE,
 }
 
 HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@')
@@ -98,7 +133,10 @@ def check_file(eslint: str, path: str) -> list[str]:
     for entry in report:
         for message in violations_on_lines(entry.get('messages', []), lines):
             rule = message['ruleId']
-            found.append(f"{path}:{message['line']}:{message['column']}  {rule}  {HINTS[rule]}")
+            line = f"{path}:{message['line']}:{message['column']}  {rule}  {HINTS[rule]}"
+            # A multi-line template matches once per text chunk; report the statement once.
+            if line not in found:
+                found.append(line)
 
     return found
 

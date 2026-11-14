@@ -363,7 +363,7 @@ if [ -n "$JS_STAGED" ]; then
             echo "modern-js: verificando linhas novas em amd/src..."
             if ! printf '%s\n' "$MODERNJS_SRC" | xargs python3 "$MODERNJS_CHECKER" "$ESLINT_BIN"; then
                 echo "--------------------------------------------------------------"
-                echo "  Commit bloqueado: JavaScript no estilo antigo em linhas novas."
+                echo "  Commit bloqueado: JavaScript no estilo antigo (ou HTML em string) em linhas novas."
                 echo "  Moderniza a linha, ou, numa edição consciente de código antigo:"
                 echo "  SKIP_MODERN_JS=1 git commit ...  (um eslint-disable não serve:"
                 echo "  o ESLint do Moodle acusa a diretiva como não usada)"
