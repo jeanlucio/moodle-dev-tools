@@ -484,6 +484,22 @@ if { [ -n "$MUSTACHE_STAGED" ] || [ -n "$JS_STAGED" ]; } && [ -f version.php ] &
 fi
 
 # ------------------------------------------------------------------ #
+#  Cabeçalho de licença GPL — .mustache, .css e .js staged. O PHPCS    #
+#  já cobra o cabeçalho em PHP; nenhuma outra checagem cobria estes.   #
+# ------------------------------------------------------------------ #
+LICENSE_CHECKER="$MDT_DIR/check_license_header.py"
+if { [ -n "$MUSTACHE_STAGED" ] || [ -n "$CSS_STAGED" ] || [ -n "$JS_STAGED" ]; } && [ -f "$LICENSE_CHECKER" ]; then
+    echo "license-header: verificando..."
+    if ! python3 "$LICENSE_CHECKER" "$(pwd)" $MUSTACHE_STAGED $CSS_STAGED $JS_STAGED; then
+        echo "--------------------------------------------------------------"
+        echo "  Commit bloqueado: arquivo sem o cabeçalho de licença GPL do Moodle (veja acima)."
+        echo "--------------------------------------------------------------"
+        exit 1
+    fi
+    echo "license-header: OK"
+fi
+
+# ------------------------------------------------------------------ #
 #  gherkinlint — .feature staged, espelha o CI (grunt gherkinlint).   #
 #  Sem este gate, arquivo .feature é o único tipo sem checagem local: #
 #  o erro só aparece no CI, e só na leg com runchecks: all.           #

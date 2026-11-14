@@ -27,7 +27,7 @@ O hook roda **gates determinísticos** (ferramentas locais, sem custo, sem IA) e
 revisão IA. Cada gate só roda se houver arquivo do seu tipo no staging — um commit que mexe
 só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 
-### Gates determinísticos (php -l, PHPCS, capability-strings, db-strings, lang-placeholders, backup-support, get_string, capability-exists, template/module-names, duplicate-tables, redundant-indexes, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
+### Gates determinísticos (php -l, PHPCS, capability-strings, db-strings, lang-placeholders, backup-support, get_string, capability-exists, template/module-names, license-header, duplicate-tables, redundant-indexes, static-checks, ESLint, modern-js, Stylelint, gherkinlint, Mustache)
 
 | Gate | Dispara com | O que faz | Bloqueia? |
 |---|---|---|---|
@@ -43,6 +43,7 @@ só em PHP não dispara ESLint, Stylelint, gherkinlint nem o lint Mustache.
 | **Stylelint** | `.css` staged | Stylelint com o `.stylelintrc` do Moodle (espelha o `grunt stylelint:css` do CI) | Sim |
 | **Mustache** | `.mustache` staged | `@template` obrigatório; chaves `{{`/`}}` desbalanceadas | `@template` sim; chaves só avisam |
 | **template/module-names** | `.mustache` ou `.js` staged | O valor de `@template`/`@module` bate com o caminho real do arquivo (`<component>/<subpath>`) | Sim |
+| **license-header** | `.mustache`, `.css` ou `.js` staged | O cabeçalho de licença GPL do Moodle (`This file is part of Moodle` e `Moodle is free software`) está nas primeiras 25 linhas. PHP fica de fora porque o PHPCS já cobra. Isentos: `docs/`, `*.min.*` e `*-min.*`, `yui/build/`, `node_modules/`, `vendor/` e o que estiver em `<location>` do `thirdpartylibs.xml` | Sim |
 | **duplicate-tables** | `db/install.xml` staged | Nenhum `<TABLE NAME>` repetido dentro do mesmo `install.xml` | Sim |
 | **redundant-indexes** | `db/install.xml` staged | Nenhum `<INDEX>` repete, na mesma ordem, os campos de uma `<KEY>` da mesma tabela (o Moodle já cria índice para toda chave) | Sim |
 | **gherkinlint** | `.feature` staged | `gherkin-lint` com o `.gherkin-lintrc` do Moodle (espelha o `grunt gherkinlint` do CI) | Sim |
@@ -125,6 +126,12 @@ Notas:
   `core_group/comboboxsearch/group`. Zero falso-positivo testado contra 11 plugins do
   ecossistema + uma amostra do core — achou 1 problema cosmético genuíno em `mod_assign`
   (`@module` com um backtick perdido no valor, sem efeito funcional).
+- **license-header** (`check_license_header.py`) existe porque o gate de Mustache só olhava o
+  `@template`: três templates entraram sem o cabeçalho GPL em 09/11/2026 (`local_playergames`,
+  14 no total sem ele, achado de auditoria). O ESLint do Moodle não tem regra de cabeçalho e o
+  Stylelint também não, então `.js` e `.css` estavam igualmente sem checagem; PHP já é coberto pelo
+  PHPCS (`moodle.Files.BoilerplateComment`). Os dois marcadores têm de aparecer nas primeiras 25
+  linhas, o que serve ao comentário `//` do JS, ao docblock do CSS e ao `{{! }}` do Mustache.
 - **duplicate-tables** (`check_duplicate_tables.py`) é o mais simples dos cinco — autocontido,
   um `install.xml` comparado só contra ele mesmo, sem resolver componente nenhum. Usa parser de
   XML de verdade (`xml.etree.ElementTree`), não regex, já que `install.xml` é XML de verdade.
