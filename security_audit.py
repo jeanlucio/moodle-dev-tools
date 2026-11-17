@@ -84,7 +84,9 @@ GITIGNORE_COMMENT = '# AI assistant session/workspace directories, not part of t
 # v7: prompts and catalog reworded as this tool's own methodology (no outside references).
 # v8: L3-SSRF-1 rewritten (validated destination = contacted one), L3-TLS-1, core defaults
 #     sheet, URL validators executed in Phase A.
-PROMPT_VERSION = '8'
+# v9: L4-ROB-8 (JS loop bound from stored data), L4-BP-6 (global listener leak), L4-PRIV-3 (PII in
+#     the AI prompt); L4-HYG-1 now names provider labels and catch fallbacks.
+PROMPT_VERSION = '9'
 
 CLAUDE_TIMEOUT = 900
 

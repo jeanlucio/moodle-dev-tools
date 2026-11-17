@@ -473,6 +473,19 @@ do que separa um A de um A+.
   `local_aihub` v1.3.2 `usepersonalkey` e `mod_codereview` `usepersonaltoken`, ambos corrigidos
   em 08/10/2026 depois de meses sem relato, porque o recurso é opcional e o resto continuava
   funcionando com a chave do site; `local_playergames` `viewdashboard`.)*
+- **L4-ROB-8** — Laço ou alocação, no JavaScript, cujo limite vem de dado **armazenado ou
+  gerado** e lido no cliente — `data-*` restaurado, JSON de conteúdo salvo, saída de IA, modelo
+  importado — usado como contagem de repetição sem teto (`for (i < n)`, `Array.from({length: n})`,
+  `.repeat(n)`). O limite que existe só no popup ou no campo (`min`/`max` do HTML, `clamp` do
+  `input`) não vale: ele não roda sobre o dado que chega do armazenamento. `parseInt()` e
+  `Number.isFinite()` validam o tipo, não o tamanho. Um valor como `100000000` trava a aba de quem
+  abrir o conteúdo ou esgota a memória. Cada contagem lida de dado precisa de `Math.min(MAX, ...)`
+  com o mesmo teto da interface. `code_quality`/`robustness`, `low`; `security`/`dos`, `low`, quando
+  o conteúdo é escrito por um usuário e aberto no navegador de outro. Ao achar um, confira os
+  demais laços de renderização do mesmo plugin: o irmão costuma já ter o teto (`tabs` tinha),
+  e o que falta é o que sobra. Em PHP, o equivalente (`optional_param()` como contagem) está no
+  CLAUDE.md do autor. *(Casos de referência: `tiny_studiolms` 2026-11-15, linhas e colunas do
+  bloco de tabela.)*
 
 **Bugs de código**
 
@@ -508,7 +521,10 @@ do que separa um A de um A+.
 - **L4-HYG-1** — Texto visível ao usuário fixo em inglês (PHP, Mustache, JS, título de
   página, `aria-label`, cabeçalho) em vez de `get_string()`/`{{#str}}`/`core/str`.
   `code_quality`/`i18n`, `low`. *(Casos de referência: `format_flexsections`, `local_sentinel`,
-  `tool_realtime`.)* Comentários, chaves internas e mensagens de `debugging()` não contam.
+  `tool_realtime`, `tiny_studiolms`.)* Comentários, chaves internas e mensagens de `debugging()` não
+  contam. Contam também: o rótulo de um provedor devolvido pelo PHP e mostrado na tela (`'Moodle AI'`)
+  e o texto de reserva num `catch` (`msg = 'Error. Please try again.'`), que só aparece quando a
+  tradução falha e por isso passa despercebido.
 - **L4-HYG-2** — Setting ou parâmetro com `PARAM_*` mais frouxo que o dado (URL como
   `PARAM_TEXT` em vez de `PARAM_URL`, número como `PARAM_RAW`). `code_quality`/
   `input_validation`, `low`. *(Casos de referência: `aiprovider_openwebui`.)*
@@ -573,6 +589,13 @@ do que separa um A de um A+.
   terceiro empacotada sem `thirdpartylibs.xml`. `compliance`/`privacy_api` (o primeiro) ou
   `compliance`/`packaging` (o segundo), `low`. *(Casos de referência: `qtype_guessit`,
   `local_differentiator`.)*
+- **L4-PRIV-3** — Dado pessoal dentro do texto enviado a IA ou a outro serviço externo, quando a
+  funcionalidade não precisa dele: prompt de sistema com o nome ou o e-mail do autor do plugin,
+  e-mail ou nome do usuário que o plugin acrescenta sozinho ao pedido. Não é achado o texto que o
+  próprio usuário digitou ou colou (esse é assunto da declaração do `L4-PRIV-1`). Alinha-se aos
+  princípios de proteção de dados e de equidade da IA do Moodle: o prompt não leva PII.
+  `compliance`/`privacy_api`, `low`. *(Casos de referência: `tiny_studiolms` 2026-11-15, e-mail
+  do autor no prompt de sistema do chat.)*
 
 **Boas práticas que contam como `low`**
 
@@ -596,6 +619,14 @@ do que separa um A de um A+.
   `best_practice` ou `code_quality`/`core_api_misuse`, `low`.
   *(Casos de referência: `publisher/exputo/local_profilefield_autofill`, `local_listcoursefiles`,
   `tiny_cloze`, `publisher/uaiblaine/local_unlistedcourses`.)*
+- **L4-BP-6** — Listener global (`window`, `document`, `body`) registrado dentro de uma função
+  chamada mais de uma vez — por nó de `filterContentUpdated`, por abertura de popup ou modal,
+  por renderização — sem remoção nem guarda de idempotência. Os listeners se acumulam e cada um
+  mantém vivo o nó que capturou, e a cada evento todos rodam. Correção: um único listener no
+  `init()` que reconfere o `document`, ou `{once: true}`, `AbortController`, ou uma marca
+  (`data-*`) que impede registrar de novo. `best_practice`/`performance`, `low`; `info` quando a
+  função roda uma vez por página. *(Casos de referência: `tiny_studiolms` 2026-11-15, `resize`
+  em `frontend.js`.)*
 
 **Testes (só quando a auditoria roda com `--with-tests`)**
 

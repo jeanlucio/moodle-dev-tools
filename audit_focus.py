@@ -85,7 +85,9 @@ Procure ativamente: estados que a escrita deixa criar e a leitura rejeita para s
 (L4-ROB-2); formulários sem validation() para limites que, violados, quebram a atividade
 (L4-ROB-1); APIs do core contornadas (L4-API-*); Privacy Provider declarando menos do que o
 plugin grava (L4-PRIV-1); texto fixo visível ao usuário (L4-HYG-1); capability dada a papel de
-curso mas checada só no contexto de sistema (L4-ROB-7).
+curso mas checada só no contexto de sistema (L4-ROB-7); contagem de laço no JavaScript lida de dado
+armazenado ou de saída de IA sem teto (L4-ROB-8); listener global registrado em função chamada
+várias vezes (L4-BP-6); dado pessoal no prompt enviado a IA (L4-PRIV-3).
 
 Se ao ler você perceber uma VULNERABILIDADE (alguém ganha acesso, dado ou poder indevido),
 reporte-a mesmo assim, com "finding_type": "security". Ela não pode se perder só porque esta
