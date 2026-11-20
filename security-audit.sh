@@ -29,7 +29,9 @@
 #   --full               : no foco quality, lê o plugin inteiro em vez do que mudou.
 #   --since REF          : lê só os arquivos alterados desde esta tag/branch/commit
 #                          (inclui o que não foi commitado). Combina com --only.
-#   --list-groups        : mostra os grupos do plugin com arquivos e linhas, e sai.
+#   --list-groups        : mostra os grupos do plugin com arquivos e linhas, e sai. Plugin grande
+#                          sem config.json ganha grupos sugeridos (mesmos nomes do playerhud).
+#   --save-groups        : grava os grupos sugeridos em config.json (fixa os nomes) e sai.
 #   --with-moodlecheck   : roda também o local_moodlecheck (PHPDoc; release, não segurança).
 #   --no-verify          : pula o passe de verificação (mais rápido, mais falso positivo).
 #   --with-tests         : lê também a pasta tests/ a fundo. Fica de fora por padrão porque
@@ -67,7 +69,7 @@ while [ $# -gt 0 ]; do
             PASSTHRU+=("$1"); shift
             [ $# -gt 0 ] && [[ "$1" != -* ]] || { echo "erro: --only exige grupo(s) ou caminho(s)" >&2; exit 1; }
             while [ $# -gt 0 ] && [[ "$1" != -* ]]; do PASSTHRU+=("$1"); shift; done ;;
-        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests|--list-groups|--full)
+        --with-moodlecheck|--no-verify|--no-cache|--json|--no-phpstan|--with-tests|--list-groups|--save-groups|--full)
             PASSTHRU+=("$1"); shift ;;
         -h|--help) sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "erro: opção desconhecida '$1'" >&2; exit 1 ;;

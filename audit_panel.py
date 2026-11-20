@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import audit_scope
 import panel_data
 import panel_runs
 
@@ -165,6 +166,20 @@ class Handler(BaseHTTPRequestHandler):
                          'tags': panel_data.tags(directory),
                          'reports': panel_data.reports(directory)})
 
+    def _save_groups(self, payload):
+        plugin = self._plugin_or_404(payload.get('plugin') if isinstance(payload, dict) else None)
+        if plugin is None:
+            return
+        directory = panel_data.plugin_dir(plugin, self.public)
+        groups, suggested = panel_data.configured_or_suggested(directory)
+        if not suggested:
+            return self._error(400, 'o plugin não tem grupos sugeridos para salvar')
+        try:
+            audit_scope.save_groups(directory, groups)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        self._send(200, {'saved': len(groups)})
+
     def _estimate(self, query):
         options = panel_runs.validate({
             'plugin': query.get('plugin', ''), 'focus': query.get('focus', 'all'),
@@ -246,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
                 options = panel_runs.validate(self._json_body(), self.public)
                 run = panel_runs.enqueue(options, self.runs_dir)
                 return self._send(201, self._public_run(run))
+            if route == '/api/groups/save':
+                return self._save_groups(self._json_body())
             match = re.fullmatch(r'/api/runs/([\w\-]+)/cancel', route)
             if match:
                 run = panel_runs.cancel(match.group(1), self.runs_dir)

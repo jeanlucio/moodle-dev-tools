@@ -836,6 +836,26 @@ gitignorada em todo plugin — portanto nunca vai no zip do Plugin Directory:
   vai por último. Um padrão sem `/` casa só arquivos da raiz (`*.php`); com `/` final, tudo abaixo
   da pasta; com `/` no meio, o caminho ou um glob. `--list-groups` mostra os arquivos sem grupo.
 
+**Grupos sugeridos.** Plugin com mais de ~20 mil linhas de código (`tests/` não conta) e sem
+`groups` no `config.json` ganha grupos calculados na hora, com os mesmos nomes do playerhud para
+significarem a mesma coisa em todo plugin: **A** entry points (raiz, `controller/`, `form/`,
+`admin/`, `cli/`), **B** `external/`, **D** infraestrutura (`ai/`, `privacy/`, `backup/`, `db/`,
+`.github/`), **E1** `output/`, **E2** `templates/`, **F** `amd/src/`, **C** o resto de `classes/`
+e de qualquer outra pasta, **T2** testes de `external/`, `output/`, `controller/` e `behat/`, **T1**
+os demais testes. Um grupo acima do orçamento (10 mil linhas; 20 mil nos de testes, calibrados
+pelos grupos do playerhud que cabem numa janela de cota) é dividido por pasta em `C-1`, `C-2`...
+Funciona igual na CLI (`--list-groups`, `--only`) e no painel (que marca "sugerido").
+
+Os nomes acompanham o tamanho do código e podem mudar quando o plugin cresce, e o histórico de
+"segurança encerrada" é por nome. Para fixá-los, grave a sugestão:
+
+```bash
+moodle-security-audit mod/playerpuzzle --save-groups   # ou "Salvar como config.json" no painel
+```
+
+Isso preserva o `ignore` existente e **nunca sobrescreve** grupos escritos à mão. Depois é só
+editar o arquivo.
+
 **Cota esgotada.** Quando os dois modelos recusam por limite de gasto ou de sessão, a ferramenta
 para de chamar a CLI (as chamadas seguintes falham na hora), não gera a narrativa e marca o
 relatório como **`Inconclusiva`**, sem nota: lotes não lidos e candidatos sem verificação

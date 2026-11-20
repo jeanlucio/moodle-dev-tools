@@ -22,6 +22,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import audit_panel  # noqa: E402
+import audit_scope  # noqa: E402
 import panel_data  # noqa: E402
 import panel_runs  # noqa: E402
 
@@ -319,6 +320,45 @@ class GroupCoverageTest(unittest.TestCase):
         self.assertIsNone(panel_data.groups_summary(self.plugin))
 
 
+class SuggestedGroupsTest(unittest.TestCase):
+    """A big plugin without a config.json gets groups the panel and the audit both understand."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.public, self.plugin = make_public(self.tmp.name)
+        (self.plugin / '.plans' / 'security-audit' / 'config.json').unlink()
+        (self.plugin / 'classes' / 'external').mkdir()
+        (self.plugin / 'classes' / 'external' / 'e.php').write_text('<?php\n' + 'echo 3;\n' * 25000)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_groups_are_listed_as_suggested(self):
+        groups = panel_data.groups_info(self.plugin)
+        self.assertEqual(['A', 'B', 'C'], [g['name'] for g in groups])
+        self.assertTrue(all(g['suggested'] for g in groups))
+
+    def test_configured_groups_are_not_marked_as_suggested(self):
+        config = self.plugin / '.plans' / 'security-audit' / 'config.json'
+        config.write_text(json.dumps({'ignore': [], 'groups': {'A': ['*.php']}}))
+        self.assertFalse(panel_data.groups_info(self.plugin)[0]['suggested'])
+
+    def test_a_run_may_name_a_suggested_group(self):
+        options = panel_runs.validate({'plugin': 'blocks/demo', 'only': ['B']}, self.public)
+        self.assertEqual(['B'], options['only'])
+        with self.assertRaises(panel_runs.ValidationError):
+            panel_runs.validate({'plugin': 'blocks/demo', 'only': ['Z']}, self.public)
+
+    def test_the_estimate_of_a_suggested_group_counts_only_its_files(self):
+        options = panel_runs.validate({'plugin': 'blocks/demo', 'only': ['B']}, self.public)
+        self.assertEqual(1, panel_data.estimate(self.plugin, options)['files'])
+
+    def test_a_small_plugin_has_no_groups(self):
+        (self.plugin / 'classes' / 'external' / 'e.php').write_text('<?php\n')
+        self.assertEqual([], panel_data.groups_info(self.plugin))
+        self.assertIsNone(panel_data.groups_summary(self.plugin))
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -613,6 +653,33 @@ class ServerTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(404, self.request(
                     'GET', f'/api/report?plugin=blocks/demo&file={name}')[0].status)
+
+    def test_the_suggested_groups_can_be_saved_only_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            public, plugin = make_public(tmp + '/moodle')
+            (plugin / '.plans' / 'security-audit' / 'config.json').unlink()
+            (plugin / 'classes' / 'big.php').write_text('<?php\n' + 'echo 3;\n' * 25000)
+            server = audit_panel.make_server(0, self.TOKEN, public, Path(tmp) / 'runs')
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                def call(payload, token=self.TOKEN):
+                    connection = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=10)
+                    connection.request('POST', '/api/groups/save', json.dumps(payload), {
+                        'Content-Type': 'application/json', 'X-Panel-Token': token,
+                        'Host': f'127.0.0.1:{server.server_address[1]}'})
+                    response = connection.getresponse()
+                    response.read()
+                    connection.close()
+                    return response.status
+
+                self.assertEqual(403, call({'plugin': 'blocks/demo'}, token='wrong'))
+                self.assertEqual(404, call({'plugin': 'blocks/foreign'}))
+                self.assertEqual(200, call({'plugin': 'blocks/demo'}))
+                self.assertEqual(['A', 'C-1', 'C-2'], list(audit_scope.load_config(plugin)['groups']))
+                self.assertEqual(400, call({'plugin': 'blocks/demo'}))
+            finally:
+                server.shutdown()
+                server.server_close()
 
     def test_the_estimate_is_served(self):
         _, body = self.request('GET', '/api/estimate?plugin=blocks/demo&focus=all&only=B')

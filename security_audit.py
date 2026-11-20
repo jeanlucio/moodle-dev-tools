@@ -955,16 +955,33 @@ def incomplete_reason(info):
     return ' e '.join(parts) + cause + '; nenhuma nota foi calculada'
 
 
-def print_groups(scan_files, ignored_files, config, plugin_dir=None):
-    """--list-groups: how the plugin splits into the configured groups."""
+def effective_groups(plugin_dir, config):
+    """(groups, suggested): the configured groups, or suggested ones for a big plugin without any.
+
+    The suggestion is computed from the whole plugin, tests/ included, so the tests groups exist
+    and a run that names one reads tests/. It is not saved: `--save-groups` does that.
+    """
+    if config['groups']:
+        return config['groups'], False
+    scan, _ = collect_files(plugin_dir, include_tests=True)
+    scan, _ = audit_scope.apply_ignore(scan, config['ignore'])
+    groups = audit_scope.suggest_groups(scan)
+    return groups, bool(groups)
+
+
+def print_groups(scan_files, ignored_files, groups, suggested=False, plugin_dir=None):
+    """--list-groups: how the plugin splits into its groups (configured or suggested)."""
     total = sum(e['lines'] for e in scan_files)
     print(f'{len(scan_files)} arquivos, {total} linhas na leitura'
           + (f' ({len(ignored_files)} arquivos fora, {sum(e["lines"] for e in ignored_files)}'
              ' linhas)' if ignored_files else ''))
-    if not config['groups']:
+    if not groups:
         print('nenhum grupo configurado (crie ' + audit_scope.CONFIG_REL + ')')
         return 0
-    assigned, unassigned = audit_scope.assign_groups(scan_files, config['groups'])
+    if suggested:
+        print('grupos SUGERIDOS (o plugin não tem config.json com grupos); '
+              '--save-groups grava como config.json e fixa os nomes')
+    assigned, unassigned = audit_scope.assign_groups(scan_files, groups)
     for name, entries in assigned.items():
         closed = (' — segurança encerrada (2 rodadas completas sem nada acima de low)'
                   if plugin_dir and audit_focus.is_closed(plugin_dir, name) else '')
@@ -1621,6 +1638,8 @@ def main():
     parser.add_argument('--since', metavar='REF', default=None,
                         help='lê só os arquivos alterados desde esta tag, branch ou commit '
                              '(inclui o que ainda não foi commitado)')
+    parser.add_argument('--save-groups', action='store_true',
+                        help='grava os grupos sugeridos em .plans/security-audit/config.json e sai')
     parser.add_argument('--list-groups', action='store_true',
                         help='mostra os grupos do plugin com arquivos e linhas, e sai')
     parser.add_argument('--focus', choices=audit_focus.FOCI, default='all',
@@ -1698,9 +1717,17 @@ def main():
         return 1
     # Naming a tests/ group or path in --only is itself the request to read tests/.
     # --list-groups shows every group, so it counts the tests groups too.
-    named = list(config['groups']) if args.list_groups else args.only
-    with_tests = args.with_tests or audit_scope.targets_tests(
-        named, config['groups'], TESTS_DIR)
+    groups, suggested = effective_groups(plugin_dir, config)
+    if args.save_groups:
+        try:
+            audit_scope.save_groups(plugin_dir, groups)
+        except ValueError as exc:
+            print(f'erro: {exc}', file=sys.stderr)
+            return 1
+        print(f'{len(groups)} grupos gravados em {audit_scope.CONFIG_REL}')
+        return 0
+    named = list(groups) if args.list_groups else args.only
+    with_tests = args.with_tests or audit_scope.targets_tests(named, groups, TESTS_DIR)
     scan_files, metadata_only = collect_files(plugin_dir, include_tests=with_tests)
     scan_files, ignored_files = audit_scope.apply_ignore(scan_files, config['ignore'])
     if not scan_files:
@@ -1708,7 +1735,7 @@ def main():
         return 1
 
     if args.list_groups:
-        return print_groups(scan_files, ignored_files, config, plugin_dir)
+        return print_groups(scan_files, ignored_files, groups, suggested, plugin_dir)
 
     # The attack-surface inventory describes the whole plugin even when the scan is narrowed.
     inventory = build_inventory(plugin_dir, scan_files, metadata_only)
@@ -1721,7 +1748,7 @@ def main():
             print(f'Foco qualidade: lendo só o que mudou desde {tag} (use --full para o plugin inteiro)')
     full_files = scan_files
     if args.only:
-        scan_files = audit_scope.select_only(scan_files, args.only, config['groups'])
+        scan_files = audit_scope.select_only(scan_files, args.only, groups)
     if args.since:
         try:
             changed = audit_scope.changed_since(plugin_dir, args.since)

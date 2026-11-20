@@ -52,6 +52,127 @@ class MatchingTest(unittest.TestCase):
         self.assertFalse(scope.matches('cli/other.php', 'cli/seed*.php'))
 
 
+def sized(**files):
+    """A scan from {path: lines}; paths hold slashes, so callers pass the dict as `**{...}`."""
+    return [{'rel': rel, 'lines': lines} for rel, lines in files.items()]
+
+
+def big_plugin():
+    scan = sized(**{'view.php': 300, 'lib.php': 200, 'db/access.php': 100, 'templates/a.mustache': 500,
+                    'classes/controller/c.php': 2000, 'classes/external/e.php': 3000,
+                    'classes/local/a/one.php': 4000, 'classes/local/a/two.php': 4000,
+                    'classes/local/b/three.php': 4000, 'classes/output/o.php': 1000,
+                    'lib/helper.php': 500, 'amd/src/main.js': 1500,
+                    'tests/external/e_test.php': 3000, 'tests/misc_test.php': 2000})
+    return scan
+
+
+class SuggestGroupsTest(unittest.TestCase):
+    def test_a_small_plugin_is_read_whole(self):
+        self.assertEqual({}, scope.suggest_groups(sized(**{'view.php': 500, 'classes/a.php': 900})))
+
+    def test_tests_do_not_count_towards_being_big(self):
+        scan = sized(**{'view.php': 500, 'tests/a_test.php': 90000})
+        self.assertEqual({}, scope.suggest_groups(scan))
+
+    def test_files_fall_into_the_semantic_slices_with_the_playerhud_names(self):
+        scan = big_plugin()
+        groups = scope.suggest_groups(scan)
+        assigned, unassigned = scope.assign_groups(scan, groups)
+        self.assertEqual([], unassigned)
+        by_file = {e['rel']: name for name, entries in assigned.items() for e in entries}
+        self.assertEqual('A', by_file['view.php'])
+        self.assertEqual('A', by_file['classes/controller/c.php'])
+        self.assertEqual('B', by_file['classes/external/e.php'])
+        self.assertEqual('D', by_file['db/access.php'])
+        self.assertEqual('E1', by_file['classes/output/o.php'])
+        self.assertEqual('E2', by_file['templates/a.mustache'])
+        self.assertEqual('F', by_file['amd/src/main.js'])
+        self.assertEqual('T2', by_file['tests/external/e_test.php'])
+        self.assertEqual('T1', by_file['tests/misc_test.php'])
+
+    def test_a_directory_outside_the_known_slices_goes_to_the_catch_all(self):
+        groups = scope.suggest_groups(big_plugin())
+        assigned, _ = scope.assign_groups(big_plugin(), groups)
+        owners = {name for name, entries in assigned.items() if any(e['rel'] == 'lib/helper.php' for e in entries)}
+        self.assertEqual(1, len(owners))
+        self.assertTrue(owners.pop().startswith('C'))
+
+    def test_an_oversized_slice_is_split_along_directories_within_the_budget(self):
+        scan = big_plugin()
+        groups = scope.suggest_groups(scan, budget=8000)
+        assigned, _ = scope.assign_groups(scan, groups)
+        catch_all = {name: entries for name, entries in assigned.items() if name.startswith('C-')}
+        self.assertGreaterEqual(len(catch_all), 2)
+        for name, entries in catch_all.items():
+            self.assertLessEqual(sum(e['lines'] for e in entries), 8000, name)
+        # A directory stays in one piece when it fits, so a/one.php and a/two.php travel together.
+        owner = {e['rel']: name for name, entries in catch_all.items() for e in entries}
+        self.assertEqual(owner['classes/local/a/one.php'], owner['classes/local/a/two.php'])
+
+    def test_every_file_lands_in_exactly_the_group_it_was_planned_for(self):
+        # A split slice must not claim files of a slice that comes after it.
+        scan = big_plugin() + sized(**{'classes/controller/deep/x.php': 9000,
+                                       'classes/form/f.php': 9000, 'classes/other.php': 100})
+        groups = scope.suggest_groups(scan, budget=9000)
+        assigned, unassigned = scope.assign_groups(scan, groups)
+        self.assertEqual([], unassigned)
+        self.assertEqual(len(scan), sum(len(entries) for entries in assigned.values()))
+        owner = {e['rel']: name for name, entries in assigned.items() for e in entries}
+        self.assertTrue(owner['classes/external/e.php'] == 'B')
+        self.assertTrue(owner['classes/other.php'].startswith('C'))
+
+    def test_a_split_pattern_that_would_claim_a_later_slice_falls_back_to_listing_files(self):
+        # A is over budget; its small `classes/` units would be written as `classes/`, which also
+        # matches classes/external/ (B), classes/local/ (C) and so on. Each file must still land
+        # in the group planned for it.
+        scan = sized(**{'big.php': 6000, 'lib.php': 6000, 'classes/controller/c.php': 100,
+                        'classes/form/f.php': 100, 'classes/external/e.php': 100,
+                        'classes/local/l.php': 100, 'templates/t.mustache': 15000})
+        groups = scope.suggest_groups(scan, budget=7000)
+        assigned, unassigned = scope.assign_groups(scan, groups)
+        self.assertEqual([], unassigned)
+        owner = {e['rel']: name for name, entries in assigned.items() for e in entries}
+        self.assertEqual('B', owner['classes/external/e.php'])
+        self.assertEqual('C', owner['classes/local/l.php'])
+        self.assertTrue(owner['classes/controller/c.php'].startswith('A-'))
+
+    def test_a_tests_group_is_recognised_as_reading_tests(self):
+        groups = scope.suggest_groups(big_plugin())
+        for name in ('T1', 'T2'):
+            self.assertTrue(scope.targets_tests([name], groups))
+        self.assertFalse(scope.targets_tests(['A'], groups))
+
+    def test_the_result_is_stable_between_calls(self):
+        self.assertEqual(scope.suggest_groups(big_plugin()), scope.suggest_groups(big_plugin()))
+
+
+class SaveGroupsTest(unittest.TestCase):
+    def test_the_groups_are_written_and_the_ignore_list_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp)
+            (plugin / '.plans' / 'security-audit').mkdir(parents=True)
+            (plugin / scope.CONFIG_REL).write_text(json.dumps({'ignore': ['styles.css']}))
+            scope.save_groups(plugin, {'A': ['*'], 'C': ['classes/']})
+            config = scope.load_config(plugin)
+            self.assertEqual(['styles.css'], config['ignore'])
+            self.assertEqual(['A', 'C'], list(config['groups']))
+
+    def test_groups_somebody_wrote_are_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp)
+            (plugin / '.plans' / 'security-audit').mkdir(parents=True)
+            (plugin / scope.CONFIG_REL).write_text(json.dumps({'groups': {'X': ['x/']}}))
+            with self.assertRaises(ValueError):
+                scope.save_groups(plugin, {'A': ['*']})
+            self.assertEqual({'X': ['x/']}, scope.load_config(plugin)['groups'])
+
+    def test_an_empty_suggestion_is_not_saved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                scope.save_groups(Path(tmp), {})
+
+
 class IgnoreTest(unittest.TestCase):
     def test_ignored_files_are_split_off(self):
         kept, ignored = scope.apply_ignore(PLUGIN, ['cli/seed*.php', 'styles.css'])

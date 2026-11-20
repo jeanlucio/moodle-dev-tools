@@ -1,3 +1,25 @@
+// This file is part of Moodle - https://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
+
+/**
+ * Front end of the audit panel: plugin list, run dialog, groups and reports.
+ *
+ * @copyright  2026 Jean Lúcio
+ * @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 'use strict';
 
 const token = document.querySelector('meta[name="panel-token"]').content;
@@ -243,6 +265,11 @@ const syncRunForm = () => {
         ? 'PHPStan: a rodada de segurança já não o usa'
         : 'Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)';
     $('since').disabled = $('run-form').elements.scope.value !== 'since';
+    // Ticked groups narrow the run, so the default scope must not claim to read the whole plugin.
+    const ticked = document.querySelectorAll('#groups input:checked').length;
+    $('scope-default-title').textContent = ticked ? `Só os grupos marcados (${ticked})` : 'Plugin inteiro';
+    $('scope-default-hint').textContent = ticked
+        ? '(desmarque os grupos para ler o plugin inteiro)' : '(ou marque grupos acima para ler só eles)';
     clearTimeout(estimateTimer);
     estimateTimer = setTimeout(updateEstimate, ESTIMATE_DELAY_MS);
 };
@@ -289,8 +316,9 @@ const openRunDialog = async (plugin, preset = {}) => {
                 checked: preset.group === group.name}),
             ` ${group.name} — ${group.files} arquivos, ${group.lines} linhas`,
             group.tests ? chip('lê tests/') : null,
+            group.suggested ? chip('sugerido') : null,
             group.closed ? chip('segurança encerrada', 'good') : null))
-        : [h('p', {class: 'hint'}, 'Sem grupos configurados: lê o plugin inteiro.')]));
+        : [h('p', {class: 'hint'}, 'Plugin pequeno, sem grupos: lê o plugin inteiro.')]));
     $('since').replaceChildren(...(detail.tags.length
         ? detail.tags.map((tag) => h('option', {value: tag}, tag))
         : [h('option', {value: ''}, 'sem tags')]));
@@ -506,6 +534,15 @@ const openGroups = async (plugin) => {
     $('groups-dialog').showModal();
     const detail = await api(`/api/plugin?path=${encodeURIComponent(plugin.path)}`);
     body.replaceChildren(...detail.groups.map((group) => groupRow(plugin, group)));
+    $('groups-suggested').hidden = !detail.groups.some((group) => group.suggested);
+    $('groups-save').onclick = async () => {
+        try {
+            await api('/api/groups/save', {method: 'POST', body: {plugin: plugin.path}});
+            await openGroups(plugin);
+        } catch (failure) {
+            $('groups-suggested').textContent = failure.message;
+        }
+    };
 };
 
 // ---- reports ------------------------------------------------------------- //

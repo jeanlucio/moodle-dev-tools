@@ -16,6 +16,9 @@ that folder is gitignored in every plugin, so it never ships in the Plugin Direc
 
 Group order matters: a file belongs to the FIRST group that matches it, so a catch-all such
 as "classes/" goes last.
+
+A plugin that is big enough and has no groups of its own gets suggested ones (`suggest_groups`),
+so nobody has to write the file by hand; `save_groups` turns the suggestion into the config.
 """
 
 import fnmatch
@@ -23,6 +26,30 @@ import json
 import subprocess
 
 CONFIG_REL = '.plans/security-audit/config.json'
+
+# Calibrated on block_playerhud, whose hand-made groups each fit one quota window: the source
+# groups hold 6-9.5k lines and the tests groups 18k (tests are cheaper per line to read as a block).
+GROUP_BUDGET_LINES = 10000
+TESTS_GROUP_BUDGET_LINES = 20000
+# Below this many source lines (tests/ excluded) a plugin is read whole: two batches or less.
+AUTO_GROUPS_MIN_LINES = 20000
+TESTS_DIR = 'tests'
+
+# The slices of block_playerhud's config, which is the one that was proven in use, so the names
+# mean the same in every plugin. Order matters (first match wins): the catch-all C and T1 come
+# after the narrower groups. A root-level file is always an entry point or metadata, hence "*".
+SEMANTIC_GROUPS = {
+    'A': ['*', 'classes/controller/', 'classes/form/', 'admin/', 'ajax/', 'cli/'],
+    'B': ['classes/external/'],
+    'D': ['classes/ai/', 'classes/privacy/', 'backup/', 'db/', '.github/'],
+    'E1': ['classes/output/'],
+    'E2': ['templates/'],
+    'F': ['amd/src/', 'yui/src/'],
+    'C': ['classes/'],
+    'T2': ['tests/external/', 'tests/output/', 'tests/controller/', 'tests/behat/'],
+    'T1': ['tests/'],
+}
+TESTS_GROUPS = ('T2', 'T1')
 
 
 def load_config(plugin_dir):
@@ -135,3 +162,124 @@ def describe(only, since, full_files, scoped_files):
         parts.append(f'alterados desde {since}')
     return (f'escopo parcial ({"; ".join(parts)}): {len(scoped_files)} de {len(full_files)} '
             'arquivos analisáveis')
+
+
+def _is_tests(rel):
+    return rel == TESTS_DIR or rel.startswith(TESTS_DIR + '/')
+
+
+def _units(files, depth, limit):
+    """Split files into (pattern, lines) units no bigger than `limit`, refining oversized dirs."""
+    by_key = {}
+    for entry in files:
+        parts = entry['rel'].split('/')
+        key = '/'.join(parts[:depth]) + ('/' if len(parts) > depth else '')
+        by_key.setdefault(key, []).append(entry)
+    units = []
+    for key in sorted(by_key):
+        members = by_key[key]
+        lines = sum(e['lines'] for e in members)
+        if key.endswith('/') and len(members) == 1:
+            units.append((members[0]['rel'], lines))
+        elif key.endswith('/') and lines > limit:
+            units.extend(_units(members, depth + 1, limit))
+        else:
+            units.append((key, lines))
+    return units
+
+
+def _pack(units, limit):
+    """First-fit in path order: each unit goes to the first part with room, so a big directory in
+    the middle does not leave a tiny part at the end. Returns lists of units under `limit`."""
+    parts, totals = [], []
+    for unit in units:
+        for index, total in enumerate(totals):
+            if total + unit[1] <= limit:
+                parts[index].append(unit)
+                totals[index] += unit[1]
+                break
+        else:
+            parts.append([unit])
+            totals.append(unit[1])
+    return parts
+
+
+def _build_groups(plan, explicit=()):
+    """Turn a plan {bucket: (patterns, [file lists])} into an ordered {name: patterns} dict.
+
+    A bucket that fits stays whole and keeps its readable patterns; one that does not becomes
+    `<name>-1`, `<name>-2`... Buckets named in `explicit` list their files one by one.
+    """
+    groups, intended = {}, {}
+    for name, (patterns, parts, whole) in plan.items():
+        if len(parts) == 1 and name not in explicit:
+            groups[name] = patterns
+            intended[name] = {e['rel'] for e in whole}
+            continue
+        for number, part in enumerate(parts, 1):
+            label = f'{name}-{number}' if len(parts) > 1 else name
+            files = [e['rel'] for e in part['files']]
+            groups[label] = files if name in explicit else part['patterns']
+            intended[label] = set(files)
+    return groups, intended
+
+
+def suggest_groups(scan, budget=GROUP_BUDGET_LINES, tests_budget=TESTS_GROUP_BUDGET_LINES,
+                   min_lines=AUTO_GROUPS_MIN_LINES):
+    """Groups for a plugin that has none: {} when it is small enough to be read whole.
+
+    The files fall into the semantic slices of SEMANTIC_GROUPS; a slice over its line budget is
+    split along directory boundaries into `<name>-1`, `<name>-2`... The result is checked against
+    `assign_groups`, because a directory pattern can claim files of a later group; a slice whose
+    patterns do not reproduce the intended files falls back to listing them one by one.
+    """
+    if sum(e['lines'] for e in scan if not _is_tests(e['rel'])) < min_lines:
+        return {}
+    templates = {name: list(patterns) for name, patterns in SEMANTIC_GROUPS.items()}
+    _, leftover = assign_groups(scan, templates)
+    templates['C'] += sorted({e['rel'].split('/')[0] + '/' for e in leftover})
+    assigned, _ = assign_groups(scan, templates)
+
+    plan = {}
+    for name, entries in assigned.items():
+        if not entries:
+            continue
+        limit = tests_budget if name in TESTS_GROUPS else budget
+        patterns = [p for p in templates[name] if any(matches(e['rel'], p) for e in entries)]
+        if sum(e['lines'] for e in entries) <= limit:
+            plan[name] = (patterns, [{'files': entries, 'patterns': patterns}], entries)
+            continue
+        parts = []
+        for packed in _pack(_units(entries, 1, limit), limit):
+            cover = [pattern for pattern, _ in packed]
+            files = [e for e in entries if any(matches(e['rel'], p) for p in cover)]
+            parts.append({'files': files, 'patterns': cover})
+        plan[name] = (patterns, parts, entries)
+
+    groups, intended = _build_groups(plan)
+    actual, _ = assign_groups(scan, groups)
+    wrong = {label for label, entries in actual.items()
+             if {e['rel'] for e in entries} != intended[label]}
+    if wrong:
+        explicit = {label.rsplit('-', 1)[0] if label not in plan else label for label in wrong}
+        groups, intended = _build_groups(plan, explicit)
+        actual, _ = assign_groups(scan, groups)
+        if any({e['rel'] for e in entries} != intended[label] for label, entries in actual.items()):
+            return {}
+    return groups
+
+
+def save_groups(plugin_dir, groups):
+    """Write `groups` into the plugin's config.json, keeping its `ignore` list.
+
+    Refuses to overwrite groups somebody already wrote: those carry history in state.json.
+    """
+    config = load_config(plugin_dir)
+    if config['groups']:
+        raise ValueError('o plugin já tem grupos em ' + CONFIG_REL)
+    if not groups:
+        raise ValueError('não há grupos para salvar')
+    path = plugin_dir / CONFIG_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'ignore': config['ignore'], 'groups': groups},
+                               ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

@@ -198,17 +198,23 @@ def read_report(directory, name):
     return path.read_text(encoding='utf-8', errors='replace') if path.is_file() else None
 
 
+def configured_or_suggested(directory):
+    """(groups, suggested) as the audit sees them: config.json's, or suggested for a big plugin."""
+    import security_audit
+    return security_audit.effective_groups(directory, audit_scope.load_config(directory))
+
+
 def scan_scope(directory, with_tests=False, only=None, since=None):
     """(files in scope, all analysable files, ignored files) as the audit would read them."""
     import security_audit
     config = audit_scope.load_config(directory)
-    include_tests = with_tests or audit_scope.targets_tests(only, config['groups'],
-                                                            security_audit.TESTS_DIR)
+    groups, _ = configured_or_suggested(directory)
+    include_tests = with_tests or audit_scope.targets_tests(only, groups, security_audit.TESTS_DIR)
     scan, _ = security_audit.collect_files(directory, include_tests=include_tests)
     scan, ignored = audit_scope.apply_ignore(scan, config['ignore'])
     full = scan
     if only:
-        scan = audit_scope.select_only(scan, only, config['groups'])
+        scan = audit_scope.select_only(scan, only, groups)
     if since:
         scan = audit_scope.select_since(scan, audit_scope.changed_since(directory, since))
     return scan, full, ignored
@@ -266,21 +272,25 @@ def groups_info(directory):
     The sizes count tests/ too, so a tests group shows what naming it would read; `tests` tells the
     reader that the group reads tests/ (which a run skips otherwise, because it costs more quota).
 
+    `suggested` is true when the plugin has no groups of its own and these were computed: the
+    names then follow the file sizes, so the panel offers to save them.
+
     The list is sorted by name for reading. The order of config.json is not: there, the first group
     that matches a file takes it, so a broad group such as `classes/` has to come after the narrower
     ones, and the sizes below are computed in that order before the list is sorted.
     """
     import security_audit
-    config = audit_scope.load_config(directory)
-    if not config['groups']:
+    groups, suggested = configured_or_suggested(directory)
+    if not groups:
         return []
     scan, _, _ = scan_scope(directory, with_tests=True)
-    assigned, _ = audit_scope.assign_groups(scan, config['groups'])
+    assigned, _ = audit_scope.assign_groups(scan, groups)
     test_groups = {name for name in assigned if audit_scope.targets_tests(
-        [name], config['groups'], security_audit.TESTS_DIR)}
+        [name], groups, security_audit.TESTS_DIR)}
     coverage = group_coverage(directory, list(assigned), test_groups)
     return [{'name': name, 'files': len(entries), 'lines': sum(e['lines'] for e in entries),
              'closed': audit_focus.is_closed(directory, name), 'tests': name in test_groups,
+             'suggested': suggested,
              'last': coverage[name]['last'], 'ignored': coverage[name]['ignored']}
             for name, entries in sorted(assigned.items(), key=lambda item: natural_key(item[0]))]
 

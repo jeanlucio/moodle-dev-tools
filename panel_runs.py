@@ -67,7 +67,7 @@ def validate(payload, public=None):
     only = payload.get('only') or []
     if not isinstance(only, list) or len(only) > MAX_GROUPS:
         raise ValidationError('grupos inválidos')
-    groups = audit_scope.load_config(directory)['groups']
+    groups = panel_data.configured_or_suggested(directory)[0]
     for name in only:
         if not isinstance(name, str) or name not in groups:
             raise ValidationError(f'grupo inexistente: {name!r}')

@@ -65,7 +65,7 @@
       <fieldset id="scope-set">
         <legend>Escopo</legend>
         <label class="choice"><input type="radio" name="scope" value="default" checked>
-          <span><strong>Plugin inteiro</strong> <small>(ou só os grupos marcados)</small></span></label>
+          <span><strong id="scope-default-title">Plugin inteiro</strong> <small id="scope-default-hint"></small></span></label>
         <label class="choice"><input type="radio" name="scope" value="since">
           <span><strong>Só o que mudou desde</strong>
             <select id="since" aria-label="Tag de referência"></select></span></label>
@@ -117,6 +117,11 @@
       inconclusiva, com a verificação falha, restrita ao que mudou desde uma tag, ou (nos grupos de
       testes) que não leu <code>tests/</code>. Segurança <em>encerrada</em> = as duas últimas rodadas
       completas do grupo sem nada acima de <code>low</code>.</p>
+    <p id="groups-suggested" class="hint" hidden>Este plugin não tem <code>config.json</code> com
+      grupos: estes foram <strong>sugeridos</strong> pelo tamanho dos arquivos, com os mesmos nomes
+      do playerhud. Os nomes acompanham o tamanho do código e podem mudar; salve para fixá-los
+      (e o histórico de "segurança encerrada" passar a valer).
+      <button type="button" id="groups-save" class="btn">Salvar como config.json</button></p>
     <div class="table-wrap">
       <table id="groups-table">
         <thead>
