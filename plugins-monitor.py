@@ -10,6 +10,7 @@ import time
 import datetime
 import urllib.request
 import urllib.error
+from html import unescape
 from pathlib import Path
 
 ENV_FILE      = Path.home() / '.phpcs-ai.env'
@@ -18,7 +19,10 @@ WEEKLY_FILE   = Path.home() / '.moodle-plugins-weekly.json'
 # Permanent, append-only history (one JSON object per line). Unlike WEEKLY_FILE it is
 # never cleared. To keep it in a backed-up folder, symlink this path to a file there.
 HISTORY_FILE  = Path.home() / '.moodle-plugins-history.jsonl'
-LOG_FILE      = Path.home() / '.moodle-plugins-monitor.log'
+# Mirror of HISTORY_FILE with the summary in English (the author's own text from the
+# Marketplace listing). Same components, same order; also meant to be symlinked.
+HISTORY_EN_FILE = Path.home() / '.moodle-plugins-history.en.jsonl'
+LOG_FILE     = Path.home() / '.moodle-plugins-monitor.log'
 PLUGLIST_URL  = 'https://download.moodle.org/api/1.3/pluglist.php'
 GITHUB_API    = 'https://api.github.com/repos/{owner}/{repo}'
 
@@ -70,8 +74,24 @@ def save_seen_components(components: set[str]) -> None:
     STATE_FILE.write_text(json.dumps({'components': sorted(components)}))
 
 
-def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
-    """Accumulates plugin data for the weekly digest and for the permanent history."""
+def history_extras(plugin: dict) -> dict:
+    """Extra fields stored only in the permanent histories, taken from the directory API."""
+    versions = plugin.get('versions') or [{}]
+    latest = max(versions, key=lambda v: v.get('timecreated', 0))
+    supported = sorted({s['release'] for s in latest.get('supportedmoodles', [])})
+    released = plugin.get('timelastreleased')
+    return {
+        'origem': 'monitor',
+        'ultima_versao_em': (
+            datetime.datetime.fromtimestamp(released).strftime('%Y-%m-%d') if released else ''
+        ),
+        'moodle': f'{supported[0]}-{supported[-1]}' if supported else '',
+        'repo': plugin.get('source') or '',
+    }
+
+
+def append_weekly(plugin: dict, summary: str, pricing: dict, summary_en: str = '') -> None:
+    """Accumulates plugin data for the weekly digest and for the permanent histories."""
     entry = {
         'component': plugin['component'],
         'name': plugin['name'],
@@ -85,11 +105,13 @@ def append_weekly(plugin: dict, summary: str, pricing: dict) -> None:
 
     # History first: WEEKLY_FILE is wiped every Sunday by weekly-digest.py, so a failure
     # writing it must never cost the permanent record.
-    try:
-        with HISTORY_FILE.open('a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    except OSError as exc:
-        log(f'  AVISO: não foi possível gravar o histórico: {exc}')
+    history_entry = {**entry, **history_extras(plugin)}
+    for path, text in ((HISTORY_FILE, summary), (HISTORY_EN_FILE, summary_en)):
+        try:
+            with path.open('a', encoding='utf-8') as f:
+                f.write(json.dumps({**history_entry, 'summary': text}, ensure_ascii=False) + '\n')
+        except OSError as exc:
+            log(f'  AVISO: não foi possível gravar {path.name}: {exc}')
 
     entries: list = []
     if WEEKLY_FILE.exists():
@@ -166,8 +188,10 @@ def fetch_marketplace_pricing(component: str) -> dict:
     widget (``data-price-selector-target``) only when there is something to buy;
     free plugins show a plain Download button and no such widget.
 
-    Returns ``{'label': 'gratuito'|'pago'|'', 'detail': '<lowest price>'}``.
-    An empty label means the lookup failed and the caller should not guess.
+    Returns ``{'label': 'gratuito'|'pago'|'', 'detail': '<lowest price>',
+    'description': '<author summary, English>'}``. An empty label means the lookup
+    failed and the caller should not guess. The description comes from the same page
+    (its ``og:description`` meta tag), so it costs no extra request.
     """
     url = f'https://marketplace.moodle.com/plugins/{component}'
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
@@ -176,14 +200,22 @@ def fetch_marketplace_pricing(component: str) -> dict:
             html = resp.read().decode('utf-8', 'ignore')
     except Exception as exc:
         log(f'  preço indisponível ({component}): {exc}')
-        return {'label': '', 'detail': ''}
+        return {'label': '', 'detail': '', 'description': ''}
+
+    description = ''
+    meta = re.search(r'<meta property="og:description" content="([^"]*)"', html)
+    if meta:
+        description = re.sub(r'\s+', ' ', unescape(meta.group(1))).strip()
+        description = re.sub(r'(^|\s)#+\s*', r'\1', description)
+        if len(description) > 500:
+            description = description[:497].rstrip() + '...'
 
     if 'data-price-selector-target' not in html:
-        return {'label': 'gratuito', 'detail': ''}
+        return {'label': 'gratuito', 'detail': '', 'description': description}
 
     amounts = re.findall(r'class="price-amount">\s*([^<]+?)\s*<', html)
     detail = amounts[0].strip() if amounts else ''
-    return {'label': 'pago', 'detail': detail}
+    return {'label': 'pago', 'detail': detail, 'description': description}
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +461,7 @@ def main() -> None:
             # Left out of the state so the next run retries it.
             log(f'  ERRO ao enviar Telegram: {exc}')
         else:
-            append_weekly(plugin, summary, pricing)
+            append_weekly(plugin, summary, pricing, pricing.get('description') or github_desc)
             # Saved per plugin so a crash mid-run never re-sends earlier ones.
             seen.add(plugin['component'])
             save_seen_components(seen)
