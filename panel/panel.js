@@ -27,15 +27,15 @@ const POLL_MS = 3000;
 const ESTIMATE_DELAY_MS = 300;
 const FOCUS_LABELS = {security: 'Segurança', quality: 'Qualidade', all: 'Segurança e qualidade'};
 const STATUS_LABELS = {
-    queued: 'na fila', running: 'rodando', done: 'concluída', failed: 'falhou',
+    scheduled: 'programada', queued: 'na fila', running: 'rodando', done: 'concluída', failed: 'falhou',
     inconclusive: 'inconclusiva (cota)', cancelled: 'cancelada', lost: 'perdida',
 };
 const STATUS_TONE = {
-    queued: '', running: 'warn', done: 'good', failed: 'bad', inconclusive: 'warn',
+    scheduled: '', queued: '', running: 'warn', done: 'good', failed: 'bad', inconclusive: 'warn',
     cancelled: '', lost: 'bad',
 };
 
-const state = {plugins: [], staticSummary: {}, logs: {}, current: null};
+const state = {plugins: [], staticSummary: {}, logs: {}, current: null, cron: null};
 
 const $ = (id) => document.getElementById(id);
 
@@ -242,7 +242,7 @@ const runOptions = () => {
     const form = $('run-form');
     const scope = form.elements.scope.value;
     const focus = form.elements.focus.value;
-    return {
+    const options = {
         plugin: state.current.path,
         focus,
         only: [...document.querySelectorAll('#groups input:checked')].map((box) => box.value),
@@ -254,6 +254,20 @@ const runOptions = () => {
         no_phpstan: $('no-phpstan').checked && focus !== 'security',
         phpstan_level: Number($('phpstan-level').value),
     };
+    // datetime-local has no zone: the browser reads it as local time, and the server gets the epoch.
+    if (form.elements.when.value === 'later') {
+        options.run_at = new Date($('run-at').value).getTime() / 1000;
+    }
+    return options;
+};
+
+/** A datetime-local value (YYYY-MM-DDTHH:mm, local time) for the next full hour. */
+const nextHourLocal = () => {
+    const date = new Date(Date.now() + 3600 * 1000);
+    date.setMinutes(0, 0, 0);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+        + `T${pad(date.getHours())}:00`;
 };
 
 const syncRunForm = () => {
@@ -265,6 +279,10 @@ const syncRunForm = () => {
         ? 'PHPStan: a rodada de segurança já não o usa'
         : 'Pular o PHPStan (mais rápido, perde os bugs de tipo e de null que ele acha)';
     $('since').disabled = $('run-form').elements.scope.value !== 'since';
+    const later = $('run-form').elements.when.value === 'later';
+    $('run-at').disabled = !later;
+    $('run-submit').textContent = later ? 'Programar' : 'Enfileirar';
+    $('scheduler-hint').hidden = !later || state.cron !== false;
     // Ticked groups narrow the run, so the default scope must not claim to read the whole plugin.
     const ticked = document.querySelectorAll('#groups input:checked').length;
     $('scope-default-title').textContent = ticked ? `Só os grupos marcados (${ticked})` : 'Plugin inteiro';
@@ -306,8 +324,13 @@ const openRunDialog = async (plugin, preset = {}) => {
     if (preset.focus) {
         $('run-form').elements.focus.value = preset.focus;
     }
+    $('run-at').value = nextHourLocal();
     $('estimate').textContent = 'Calculando estimativa…';
     $('run-dialog').showModal();
+    api('/api/scheduler').then((data) => {
+        state.cron = data.cron;
+        syncRunForm();
+    }).catch(() => {});
     const detail = await api(`/api/plugin?path=${encodeURIComponent(plugin.path)}`);
     const groups = $('groups');
     groups.replaceChildren(...(detail.groups.length
@@ -331,7 +354,11 @@ const submitRun = async (event) => {
     error.hidden = true;
     $('run-submit').disabled = true;
     try {
-        await api('/api/runs', {method: 'POST', body: runOptions()});
+        const options = runOptions();
+        if ('run_at' in options && Number.isNaN(options.run_at)) {
+            throw new Error('informe a data e a hora da execução');
+        }
+        await api('/api/runs', {method: 'POST', body: options});
         $('run-dialog').close();
         await loadRuns();
         $('h-runs').scrollIntoView({behavior: 'smooth'});
@@ -373,6 +400,9 @@ const BOTTOM_SLACK_PX = 24;
 /** "criada ... · duração ..." for a run; the duration of a run in progress keeps counting. */
 const metaText = (run) => {
     const meta = [`criada ${formatDate(run.created)}`];
+    if (run.status === 'scheduled') {
+        meta.unshift(`roda em ${formatDate(run.run_at)}`);
+    }
     if (run.started) {
         const end = run.finished || Date.now() / 1000;
         meta.push(`duração ${formatDuration(end - run.started)}`);
@@ -381,7 +411,7 @@ const metaText = (run) => {
 };
 
 const runCard = async (run) => {
-    const active = ['queued', 'running'].includes(run.status);
+    const active = ['scheduled', 'queued', 'running'].includes(run.status);
     const actions = [];
     if (active) {
         actions.push(h('button', {type: 'button', class: 'btn', onclick: () => cancelRun(run.id)}, 'Cancelar'));
@@ -460,9 +490,17 @@ const refreshRuns = async () => {
     const runs = await api('/api/runs');
     const active = runs.filter((run) => run.status === 'running');
     const queued = runs.filter((run) => run.status === 'queued');
+    const scheduled = runs.filter((run) => run.status === 'scheduled');
+    const parts = [];
+    if (queued.length) {
+        parts.push(`${queued.length} na fila`);
+    }
+    if (scheduled.length) {
+        parts.push(`${scheduled.length} programada(s)`);
+    }
     $('queue-status').textContent = active.length
-        ? `Rodando: ${active[0].options.component}${queued.length ? ` · ${queued.length} na fila` : ''}`
-        : (queued.length ? `${queued.length} na fila` : 'Ocioso');
+        ? [`Rodando: ${active[0].options.component}`, ...parts].join(' · ')
+        : (parts.join(' · ') || 'Ocioso');
     if (!runs.length) {
         $('runs').replaceChildren(h('p', {class: 'hint'}, 'Nenhuma execução ainda.'));
         return;

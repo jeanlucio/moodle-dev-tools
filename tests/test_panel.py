@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import audit_panel  # noqa: E402
 import audit_scope  # noqa: E402
+import panel_cron  # noqa: E402
 import panel_data  # noqa: E402
 import panel_runs  # noqa: E402
 
@@ -570,6 +571,167 @@ class QueueTest(unittest.TestCase):
         self.assertFalse(panel_runs.runner_alive(run))
 
 
+class ScheduleTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.public, _ = make_public(self.tmp.name + '/moodle')
+        self.runs = Path(self.tmp.name) / 'runs'
+        self.addCleanup(self.tmp.cleanup)
+        self.opts = panel_runs.validate({'plugin': 'blocks/demo', 'focus': 'security'}, self.public)
+        patcher = mock.patch.dict(os.environ, {'MDT_PANEL_AUDIT_CMD': script(self.tmp.name, STAND_IN)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_run_at_in_the_past_the_future_or_of_the_wrong_type_is_refused(self):
+        now = 1_800_000_000
+        for value in (now - 3600, now + 400 * 24 * 3600, '2026-12-01', None, True, [1]):
+            with self.subTest(value=value), self.assertRaises(panel_runs.ValidationError):
+                panel_runs.parse_run_at(value, now)
+
+    def test_a_time_a_few_seconds_ago_is_tolerated_for_clock_skew(self):
+        now = 1_800_000_000
+        self.assertEqual(float(now - 5), panel_runs.parse_run_at(now - 5, now))
+
+    def test_a_scheduled_run_is_stored_with_its_time_and_does_not_start(self):
+        run = panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 3600)
+        self.assertEqual('scheduled', run['status'])
+        self.assertIsNone(panel_runs.tick(self.runs))
+        self.assertEqual('scheduled', panel_runs.read_run(run['id'], self.runs)['status'])
+
+    def test_a_scheduled_run_whose_time_has_come_is_started(self):
+        run = panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 3600)
+        started = panel_runs.tick(self.runs, now=time.time() + 3601)
+        self.assertEqual(run['id'], started['id'])
+        self.assertEqual('running', panel_runs.read_run(run['id'], self.runs)['status'])
+
+    def test_a_due_run_waits_while_another_is_running(self):
+        busy = panel_runs.enqueue(self.opts, self.runs)
+        busy.update(status='running', started=time.time(), pid=os.getpid())
+        panel_runs.write_run(busy, self.runs)
+        run = panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 10)
+        self.assertIsNone(panel_runs.tick(self.runs, now=time.time() + 20))
+        self.assertEqual('queued', panel_runs.read_run(run['id'], self.runs)['status'])
+
+    def test_due_runs_start_in_the_order_of_their_scheduled_time(self):
+        now = time.time()
+        late = panel_runs.enqueue(self.opts, self.runs, run_at=now + 200)
+        early = panel_runs.enqueue(self.opts, self.runs, run_at=now + 100)
+        self.assertEqual(early['id'], panel_runs.tick(self.runs, now=now + 300)['id'])
+        self.assertEqual('queued', panel_runs.read_run(late['id'], self.runs)['status'])
+
+    def test_a_scheduled_run_can_be_cancelled_and_then_never_starts(self):
+        run = panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 10)
+        self.assertEqual('cancelled', panel_runs.cancel(run['id'], self.runs)['status'])
+        self.assertIsNone(panel_runs.tick(self.runs, now=time.time() + 60))
+
+    def test_an_old_scheduled_run_still_shows_among_many_newer_ones(self):
+        old = panel_runs.enqueue(self.opts, self.runs, now=1_700_000_000, run_at=time.time() + 3600)
+        for index in range(5):
+            panel_runs.enqueue(self.opts, self.runs, now=1_800_000_000 + index)
+        shown = [r['id'] for r in panel_runs.list_for_panel(3, self.runs)]
+        self.assertIn(old['id'], shown)
+        self.assertEqual(4, len(shown))
+
+    def test_two_ticks_at_the_same_moment_start_one_audit(self):
+        panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 1)
+        panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 1)
+        promote = panel_runs.promote_due
+        meeting = threading.Barrier(2)
+
+        def slow_promote(*args, **kwargs):
+            # Holds each pass until the other one is in the same spot, so a missing lock always
+            # shows up. With the lock the second pass cannot get here, and the wait times out.
+            try:
+                meeting.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            return promote(*args, **kwargs)
+
+        starts = []
+        real_start = panel_runs.start
+
+        def counting_start(run, runs_dir=None):
+            starts.append(run['id'])
+            return real_start(run, runs_dir)
+
+        with mock.patch.object(panel_runs, 'promote_due', side_effect=slow_promote), \
+                mock.patch.object(panel_runs, 'start', side_effect=counting_start):
+            threads = [threading.Thread(target=panel_runs.tick, args=(self.runs, time.time() + 5))
+                       for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        # Without the lock both passes pick the same run and start its audit twice.
+        self.assertEqual(1, len(starts))
+        runs = panel_runs.list_runs(10, self.runs)
+        self.assertEqual(1, sum(1 for r in runs if r['started']))
+        self.assertEqual(1, sum(1 for r in runs if r['status'] == 'queued'))
+
+    def test_the_scheduling_session_path_is_used_only_when_claude_is_not_found(self):
+        run = {'path': '/scheduled/bin'}
+        with mock.patch.object(panel_runs.shutil, 'which', return_value=None):
+            self.assertEqual('/scheduled/bin', panel_runs._runner_env(run)['PATH'])
+        with mock.patch.object(panel_runs.shutil, 'which', return_value='/usr/bin/claude'):
+            self.assertNotEqual('/scheduled/bin', panel_runs._runner_env(run)['PATH'])
+        with mock.patch.object(panel_runs.shutil, 'which', return_value=None):
+            self.assertEqual(os.environ['PATH'], panel_runs._runner_env({})['PATH'])
+
+    def test_the_tick_script_starts_a_due_run_without_the_server(self):
+        run = panel_runs.enqueue(self.opts, self.runs, run_at=time.time() + 1)
+        stored = panel_runs.read_run(run['id'], self.runs)
+        stored['run_at'] = time.time() - 1
+        panel_runs.write_run(stored, self.runs)
+        code = ("import sys; from pathlib import Path; sys.path.insert(0, %r); import panel_runs, panel_tick;"
+                " panel_runs.RUNS_DIR = Path(%r); sys.exit(panel_tick.main())"
+                % (str(Path(__file__).resolve().parent.parent), str(self.runs)))
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                                env={**os.environ, 'MDT_PANEL_AUDIT_CMD': os.environ['MDT_PANEL_AUDIT_CMD']})
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('iniciada', result.stdout)
+        finished = wait_for(lambda: (r := panel_runs.read_run(run['id'], self.runs)) and r['status'] == 'done' and r)
+        self.assertTrue(finished)
+
+
+class CronTest(unittest.TestCase):
+    def fake(self, current):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs.get('input')))
+            if command == ['crontab', '-l']:
+                return subprocess.CompletedProcess(command, 0 if current is not None else 1, current or '', '')
+            return subprocess.CompletedProcess(command, 0, '', '')
+        return calls, mock.patch.object(panel_cron.subprocess, 'run', side_effect=run)
+
+    def test_the_line_is_added_once_and_keeps_the_other_entries(self):
+        calls, patcher = self.fake('0 3 * * * other-job\n')
+        with patcher:
+            self.assertTrue(panel_cron.install())
+        written = calls[-1][1]
+        self.assertTrue(written.startswith('0 3 * * * other-job\n'))
+        self.assertEqual(1, written.count('panel-tick.sh'))
+        self.assertTrue(written.endswith('\n'))
+
+    def test_installing_twice_changes_nothing(self):
+        calls, patcher = self.fake('0 3 * * * x\n' + panel_cron.cron_line() + '\n')
+        with patcher:
+            self.assertFalse(panel_cron.install())
+        self.assertEqual([['crontab', '-l']], [c[0] for c in calls if c[0][0] == 'crontab'][:1])
+        self.assertFalse(any(c[0] == ['crontab', '-'] for c in calls))
+
+    def test_a_commented_out_line_does_not_count_as_installed(self):
+        _, patcher = self.fake('# ' + panel_cron.cron_line() + '\n')
+        with patcher:
+            self.assertFalse(panel_cron.installed())
+
+    def test_an_empty_crontab_gets_just_the_line(self):
+        calls, patcher = self.fake(None)
+        with patcher:
+            panel_cron.install()
+        self.assertEqual(panel_cron.cron_line() + '\n', calls[-1][1])
+
+
 class ServerTest(unittest.TestCase):
     TOKEN = 'test-token'
 
@@ -711,6 +873,21 @@ class ServerTest(unittest.TestCase):
         response, body = self.post('/api/runs', {'plugin': 'blocks/demo', 'since': '--help'}, self.TOKEN)
         self.assertEqual(400, response.status)
         self.assertIn('referência', json.loads(body)['error'])
+
+    def test_a_run_can_be_scheduled_over_http_and_a_past_time_is_refused(self):
+        response, body = self.post('/api/runs', {'plugin': 'blocks/demo', 'run_at': time.time() + 3600}, self.TOKEN)
+        self.assertEqual(201, response.status)
+        run = json.loads(body)
+        self.assertEqual('scheduled', run['status'])
+        self.assertAlmostEqual(time.time() + 3600, run['run_at'], delta=5)
+        self.assertNotIn('path', run)
+        past = self.post('/api/runs', {'plugin': 'blocks/demo', 'run_at': time.time() - 3600}, self.TOKEN)[0]
+        self.assertEqual(400, past.status)
+        self.post(f'/api/runs/{run["id"]}/cancel', {}, self.TOKEN)
+
+    def test_the_scheduler_endpoint_says_whether_cron_has_the_line(self):
+        with mock.patch.object(panel_cron, 'installed', return_value=False):
+            self.assertEqual({'cron': False}, json.loads(self.request('GET', '/api/scheduler')[1]))
 
     def test_a_queued_run_can_be_cancelled_over_http(self):
         run = json.loads(self.post('/api/runs', {'plugin': 'blocks/demo'}, self.TOKEN)[1])

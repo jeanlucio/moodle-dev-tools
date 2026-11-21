@@ -90,6 +90,16 @@
           </select>
         </label>
       </fieldset>
+      <fieldset id="when-set">
+        <legend>Quando</legend>
+        <label class="choice"><input type="radio" name="when" value="now" checked>
+          <span><strong>Agora</strong><small>Entra na fila e roda assim que a anterior terminar.</small></span></label>
+        <label class="choice"><input type="radio" name="when" value="later">
+          <span><strong>Programar</strong>
+            <input type="datetime-local" id="run-at" aria-label="Data e hora da execução"></span></label>
+        <p id="scheduler-hint" class="hint" hidden>O cron não tem a linha do agendador: com o painel
+          fechado, a execução programada não sai. Rode <code>moodle-panel --install-cron</code>.</p>
+      </fieldset>
       <p id="estimate" class="estimate" role="status" aria-live="polite">Calculando estimativa…</p>
       <p id="run-error" class="error" role="alert" hidden></p>
       <div class="actions">

@@ -14,6 +14,7 @@ import json
 import mimetypes
 import re
 import secrets
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import audit_scope
+import panel_cron
 import panel_data
 import panel_runs
 
@@ -123,9 +125,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._static_checks(query.get('plugin'))
             if route == '/api/static-all':
                 return self._static_all()
+            if route == '/api/scheduler':
+                return self._send(200, {'cron': panel_cron.installed()})
             if route == '/api/runs':
                 return self._send(200, [self._public_run(r)
-                                        for r in panel_runs.list_runs(40, self.runs_dir)])
+                                        for r in panel_runs.list_for_panel(40, self.runs_dir)])
             match = re.fullmatch(r'/api/runs/([\w\-]+)(/log)?', route)
             if match:
                 return self._run(match.group(1), bool(match.group(2)), query)
@@ -217,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, summary)
 
     def _public_run(self, run):
-        return {k: run.get(k) for k in ('id', 'status', 'options', 'created', 'started',
+        return {k: run.get(k) for k in ('id', 'status', 'options', 'created', 'run_at', 'started',
                                         'finished', 'exit_code', 'report', 'resumed_by')}
 
     def _run(self, run_id, want_log, query):
@@ -258,8 +262,13 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         try:
             if route == '/api/runs':
-                options = panel_runs.validate(self._json_body(), self.public)
-                run = panel_runs.enqueue(options, self.runs_dir)
+                payload = self._json_body()
+                run_at = None
+                if isinstance(payload, dict) and 'run_at' in payload:
+                    payload = dict(payload)
+                    run_at = panel_runs.parse_run_at(payload.pop('run_at'))
+                options = panel_runs.validate(payload, self.public)
+                run = panel_runs.enqueue(options, self.runs_dir, run_at=run_at)
                 return self._send(201, self._public_run(run))
             if route == '/api/groups/save':
                 return self._save_groups(self._json_body())
@@ -301,7 +310,19 @@ def scheduler(runs_dir, stop):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='moodle-panel', description=__doc__.split('\n')[0])
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
+    parser.add_argument('--install-cron', action='store_true',
+                        help='adiciona ao crontab a linha que inicia as auditorias programadas '
+                             'mesmo com o painel fechado, e sai')
     args = parser.parse_args(argv)
+    if args.install_cron:
+        try:
+            changed = panel_cron.install()
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            print(f'erro: {exc}', file=sys.stderr)
+            return 1
+        print('linha adicionada ao crontab:' if changed else 'já está no crontab:')
+        print(f'  {panel_cron.cron_line()}')
+        return 0
     try:
         server = make_server(args.port)
     except OSError as exc:

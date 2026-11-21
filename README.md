@@ -1141,8 +1141,8 @@ abra `http://localhost:8765`. Não abre nada no firewall nem passa pelo Caddy.
 |---|---|
 | **Plugins** | Lista os plugins próprios (repositório git com `version.php` cujo `origin` é do mesmo dono deste repositório, ou sem `origin`; terceiros clonados na árvore não entram). Mostra a última nota de cada foco e se as checagens determinísticas estão limpas. |
 | **Checar** / **Checar todos** | Roda o `moodle-static-checks`: sem IA, sem cota, em segundos. |
-| **Auditar** | Escolhe plugin, foco (segurança, qualidade ou os dois), grupos, escopo (padrão, desde uma tag ou plugin inteiro), testes e verificação. Mostra antes quantos arquivos, linhas e chamadas de IA a rodada lê. |
-| **Execuções** | Fila com andamento (lê o mesmo `.progress/` do `progress.html`), saída ao vivo, botão de cancelar e atalho para o relatório gerado. |
+| **Auditar** | Escolhe plugin, foco (segurança, qualidade ou os dois), grupos, escopo (padrão, desde uma tag ou plugin inteiro), testes e verificação, e **quando**: agora (entra na fila) ou **programada** para uma data e hora. Mostra antes quantos arquivos, linhas e chamadas de IA a rodada lê. |
+| **Execuções** | Fila e programadas, com andamento (lê o mesmo `.progress/` do `progress.html`), saída ao vivo, botão de cancelar e atalho para o relatório gerado. |
 | **Relatórios** | Abre os relatórios `.md` do plugin renderizados, em ordem de data. |
 
 **Uma execução por vez.** A cota do Claude é uma só, então as auditorias entram numa fila e a mais
@@ -1154,6 +1154,31 @@ arquivos. Uma execução que sumiu sem registrar o fim é marcada como *perdida*
 outra vez) e, graças ao cache, a nova rodada paga só o que a cota cortou. Cada execução inconclusiva
 só pode ser retomada uma vez; o painel não adivinha quando a cota volta, então o clique é manual. As
 auditorias são as mesmas do terminal, na mesma assinatura do Claude Code.
+
+**Auditoria programada.** No diálogo de **Auditar**, "Programar" guarda a execução com a data e a hora
+escolhidas (no fuso do seu navegador; o servidor guarda o instante em epoch) e ela aparece como
+*programada*, com **Cancelar**. Quando o horário chega ela entra na fila como qualquer outra, então a
+regra de uma por vez continua valendo: duas programadas para o mesmo horário rodam em sequência, na
+ordem do horário. Aceita de agora até um ano à frente; as opções são validadas na hora de programar.
+
+Para sair **com o painel fechado** é preciso o agendador no cron, uma linha que roda
+`panel-tick.sh` a cada minuto (ele chama a mesma passada que o servidor faz a cada poucos segundos):
+
+```bash
+moodle-panel --install-cron    # idempotente: acrescenta a linha ao crontab, sem tocar nas outras
+```
+
+O diálogo avisa quando a linha não está no crontab. Detalhes que importam:
+
+- uma trava de arquivo (`.panel/runs/.tick.lock`) impede que o cron e o painel aberto iniciem a mesma
+  execução ao mesmo tempo;
+- o cron roda com um `PATH` enxuto, sem o `claude` (instalado pelo nvm). Por isso a execução programada
+  guarda o `PATH` da sessão que a criou e o runner o usa só quando o `PATH` atual não acha o `claude`;
+- se a máquina estiver desligada no horário, a execução sai assim que o cron voltar (o horário já terá
+  vencido); não há expiração;
+- uma execução programada que termina *inconclusiva* (cota esgotada) **não** é reprogramada sozinha:
+  continua pelo botão **Continuar**, como as outras;
+- não há recorrência ("toda segunda"): cada programação é uma execução só.
 
 **O que impede uma página qualquer de dirigir o servidor:**
 
@@ -1168,7 +1193,7 @@ auditorias são as mesmas do terminal, na mesma assinatura do Claude Code.
 
 Limites: leitura de dados e relatórios não pede o token (o `Host` e o encaminhamento de porta já a
 restringem); o painel não substitui o terminal para as opções que não expõe (`--model`, `--jobs`,
-`--batch-lines`); e só funciona com a página aberta enquanto o servidor roda.
+`--batch-lines`); e a fila só anda sozinha com o servidor aberto ou com o agendador no cron (`--install-cron`).
 
 ## Checagens de schema contra código — `moodle-static-checks`
 
