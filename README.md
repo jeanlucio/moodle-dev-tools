@@ -417,14 +417,18 @@ composer global require squizlabs/php_codesniffer
 
 # Clona e configura o moodle-cs
 git clone https://github.com/moodlehq/moodle-cs ~/moodle-cs
-cd ~/moodle-cs && composer install
+cd ~/moodle-cs && git checkout v3.9.2 && composer install
 
 # Define o padrão e os caminhos
 phpcs --config-set default_standard moodle
 phpcs --config-set installed_paths ~/moodle-cs,~/moodle-cs/vendor/phpcsstandards/phpcsextra,~/moodle-cs/vendor/phpcsstandards/phpcsutils
 ```
 
-> **Nota PHP 8.3:** o `phpcsutils 1.1+` referencia constantes do PHP 8.4 em tempo de compilação.
+> **Mesma versão do CI:** use a tag do `moodle-cs` que o `moodle-plugin-ci` instala (veja o log do passo
+> "Initialise moodle-plugin-ci"). Com o local defasado, o erro só aparece no GitHub. Para atualizar:
+> `git fetch --tags && git checkout <tag> && composer update`.
+
+> **Nota PHP 8.3:** em versões antigas do PHPCS, o `phpcsutils 1.1+` referencia constantes do PHP 8.4 em tempo de compilação.
 > O arquivo `phpcs-bootstrap.php` resolve isso automaticamente — o `install.sh` cuida da configuração.
 
 ## Instalação
