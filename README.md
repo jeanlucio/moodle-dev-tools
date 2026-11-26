@@ -224,6 +224,13 @@ normalmente em `docs/` quando há arquivo do tipo certo staged — por exemplo, 
 estilo num `docs/assets/js/*.js`. Caso de origem: `moodle-mod_playerwords`, commit que adicionou
 o site de documentação do plugin.
 
+Como o diff só traz os trechos alterados, o prompt leva antes um bloco **FILE CONTEXT**, montado pelo
+`ai_file_context.py` a partir da versão *staged* de cada arquivo, marcado como fora de revisão: os `namespace` e `use`
+do PHP, os `import` do JavaScript e, no CSS, os comentários do topo do arquivo e os que falam de escopo (até 60 linhas
+por arquivo, sem o bloco de licença). Casos de origem (26/11/2026): a IA acusou como ausente um
+`use core_availability\info;` que já estava no arquivo (`format_smartcards`) e cobrou, em dois commits do
+`filter_playerhud`, uma justificativa de escopo que estava no topo do `styles.css`. Os três commits saíram com `SKIP_AI=1`.
+
 #### PHP
 
 | # | Regra |
@@ -278,7 +285,7 @@ o site de documentação do plugin.
 | # | Regra |
 |---|---|
 | 35 | `!important` — proibido; aumentar especificidade |
-| 36 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`) |
+| 36 | Seletor sem escopo de path-class (`.path-*` ou `body.path-*`). Markup injetado em página alheia vale com classe prefixada e um comentário que explique, ao lado da regra ou uma vez no topo do arquivo |
 | 37 | Hex hardcoded fora de `var()` — usar `var(--nome, #fallback)` |
 
 #### XML (`db/*.xml`)

@@ -653,7 +653,7 @@ You are a Moodle plugin code reviewer. Analyse the diff below checking ONLY what
 
 === CSS (*.css) ===
 35. !important — forbidden; resolve the conflict by increasing selector specificity
-36. CSS selector without a path-class scope (.path-* or body.path-*) — prevents style leaks to other pages. EXCEPTION: rules that style the inside of a Bootstrap modal hoisted to <body> via appendChild() before .show() may instead be scoped by the modal's own unique ID (e.g. #ph-wizard-modal .some-class) — this is the correct, intentional pattern for hoisted modals, since ancestor/path-class scoping breaks once the modal is moved out of the page body hierarchy. EXCEPTION 2: rules that style markup the plugin injects into a page it does not own (e.g. badges a local_* plugin adds to the course page, or a mod_*'s cm_info_dynamic output rendered inside course/view.php) cannot use the plugin's own .path-* class, because that page's <body> never carries it; they may instead be anchored on plugin-prefixed class names (tag-qualified when needed, e.g. iframe.ph-video-embed), provided a short CSS comment next to the rule says why path-class scoping does not apply. Only flag CSS with no scope at all (neither path-class, nor a specific element/modal ID, nor a plugin-prefixed class documented as above).
+36. CSS selector without a path-class scope (.path-* or body.path-*) — prevents style leaks to other pages. EXCEPTION: rules that style the inside of a Bootstrap modal hoisted to <body> via appendChild() before .show() may instead be scoped by the modal's own unique ID (e.g. #ph-wizard-modal .some-class) — this is the correct, intentional pattern for hoisted modals, since ancestor/path-class scoping breaks once the modal is moved out of the page body hierarchy. EXCEPTION 2: rules that style markup the plugin injects into a page it does not own (e.g. badges a local_* plugin adds to the course page, or a mod_*'s cm_info_dynamic output rendered inside course/view.php) cannot use the plugin's own .path-* class, because that page's <body> never carries it; they may instead be anchored on plugin-prefixed class names (tag-qualified when needed, e.g. iframe.ph-video-embed), provided a short CSS comment next to the rule, or once near the top of the file for the whole stylesheet, says why path-class scoping does not apply. Only flag CSS with no scope at all (neither path-class, nor a specific element/modal ID, nor a plugin-prefixed class documented as above).
 37. Hardcoded hex value outside var() — e.g. color: #333 should be var(--name, #333); ignore if already inside var()
 
 === XML (db/*.xml) ===
@@ -667,9 +667,18 @@ Respond in EXACTLY this format:
 - No issues found: first line "APROVADO" and nothing else
 - Issues found: first line "BLOQUEADO" followed by a list with "- file:line — description"
 
-Diff to review:
+A FILE CONTEXT block may come before the diff. It holds lines taken from the staged version of the changed files, unchanged ones included: PHP namespace and use statements, JavaScript imports, and the CSS file-level and scoping comments. It is not under review: never report an issue about it. The diff shows only the changed hunks, so before reporting something as missing (such as a justification comment), look for it there. Never report a missing use or import statement: it is none of the rules, a diff cannot show it, and the test suite catches it.
+
 RULES
 
+# Unchanged lines a verdict depends on (see ai_file_context.py).
+CONTEXT_BUILDER="$MDT_DIR/ai_file_context.py"
+if [ -f "$CONTEXT_BUILDER" ]; then
+    CONTEXT=$(python3 "$CONTEXT_BUILDER" "$(pwd)" $AI_STAGED)
+    [ -n "$CONTEXT" ] && printf 'FILE CONTEXT:\n%s\n\n' "$CONTEXT" >> "$PROMPT_FILE"
+fi
+
+echo "Diff to review:" >> "$PROMPT_FILE"
 echo "$DIFF" >> "$PROMPT_FILE"
 
 echo ""
