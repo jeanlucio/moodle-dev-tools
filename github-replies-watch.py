@@ -4,6 +4,10 @@
 # autenticada no `gh` e avisa via Telegram quando o último a falar numa thread não é o
 # dono há mais de N dias. Silencioso quando não há nada pendente.
 #
+# Também avisa de relatos privados de vulnerabilidade ainda em triagem (o SECURITY.md da
+# conta promete primeira resposta em até 7 dias). Esses avisam já no primeiro dia, sem
+# esperar --days, e a mensagem leva só o link: o resumo da falha não sai do GitHub.
+#
 # Motivação: Discussions do GitHub notificam de forma bem mais discreta que Issues — uma
 # sugestão de feature ficou quase sem resposta por isso (local_resourcestats, 09/09/2026).
 
@@ -92,10 +96,11 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def gh_json(args: list[str]) -> dict | list | None:
+def gh_json(args: list[str], quiet: bool = False) -> dict | list | None:
     out = subprocess.run([GH, *args], capture_output=True, text=True)
     if out.returncode != 0:
-        log(f'gh falhou ({" ".join(args[:2])}): {out.stderr.strip()[:200]}')
+        if not quiet:
+            log(f'gh falhou ({" ".join(args[:2])}): {out.stderr.strip()[:200]}')
         return None
     try:
         return json.loads(out.stdout)
@@ -173,6 +178,28 @@ def pending_issues_and_prs(owner: str, repo: str) -> list[dict]:
     return found
 
 
+def pending_advisories(owner: str, repo: str) -> list[dict]:
+    # A private vulnerability report waits in the 'triage' state until the owner accepts or
+    # closes it, so every advisory still there is pending. The API answers an empty list when
+    # private reporting is off, and a failure here is not worth a log line per repository.
+    data = gh_json(['api', f'repos/{owner}/{repo}/security-advisories?state=triage'], quiet=True)
+    if not isinstance(data, list):
+        return []
+    found = []
+    for adv in data:
+        ghsa = adv.get('ghsa_id') or '?'
+        found.append({
+            'key': f'{repo}#advisory-{ghsa}',
+            'repo': repo, 'kind': 'advisory', 'number': ghsa,
+            # The summary describes the flaw; it stays on GitHub and never goes to Telegram.
+            'title': 'relato privado de vulnerabilidade (detalhes só no GitHub)',
+            'url': adv.get('html_url') or f'https://github.com/{owner}/{repo}/security/advisories',
+            'who': login(adv.get('author')),
+            'when': adv.get('created_at') or adv.get('updated_at') or '',
+        })
+    return [it for it in found if it['when']]
+
+
 def scan(owner: str) -> tuple[list[dict], int]:
     repos = list_repos(owner)
     pending: list[dict] = []
@@ -181,6 +208,7 @@ def scan(owner: str) -> tuple[list[dict], int]:
         if r.get('hasDiscussionsEnabled'):
             pending.extend(pending_discussions(owner, name))
         pending.extend(pending_issues_and_prs(owner, name))
+        pending.extend(pending_advisories(owner, name))
     return pending, len(repos)
 
 
@@ -188,7 +216,7 @@ def scan(owner: str) -> tuple[list[dict], int]:
 # Notificação
 # ---------------------------------------------------------------------------
 
-KIND_LABEL = {'discussion': 'Discussion', 'issue': 'Issue', 'pr': 'PR'}
+KIND_LABEL = {'discussion': 'Discussion', 'issue': 'Issue', 'pr': 'PR', 'advisory': '⚠️ Segurança'}
 
 
 def age_days(iso: str, now: datetime.datetime) -> int:
@@ -209,7 +237,8 @@ def format_message(items: list[dict], now: datetime.datetime) -> str:
         for it in sorted(byrepo[repo], key=lambda x: x['when']):
             days = age_days(it['when'], now)
             ago = 'hoje' if days == 0 else f'há {days} dia{"s" if days != 1 else ""}'
-            lines.append(f'• {KIND_LABEL[it["kind"]]} #{it["number"]} — {e(it["title"])}')
+            number = it['number'] if it['kind'] == 'advisory' else f'#{it["number"]}'
+            lines.append(f'• {KIND_LABEL[it["kind"]]} {e(str(number))} — {e(it["title"])}')
             lines.append(f'  último: {e(it["who"])}, {ago}')
             lines.append(f'  {e(it["url"])}')
         lines.append('')
@@ -267,7 +296,9 @@ def main() -> int:
 
     now = datetime.datetime.now(datetime.timezone.utc)
     pending, nrepos = scan(owner)
-    old_enough = [it for it in pending if age_days(it['when'], now) >= args.days]
+    # A security report alerts on day one: waiting --days would eat into the 7-day promise.
+    old_enough = [it for it in pending
+                  if it['kind'] == 'advisory' or age_days(it['when'], now) >= args.days]
 
     state = load_state()
     pending_keys = {it['key'] for it in pending}

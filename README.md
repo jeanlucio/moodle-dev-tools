@@ -1580,8 +1580,8 @@ domínio → docroot).
 
 ## Monitor de conversas do GitHub sem resposta
 
-Script complementar (`github-replies-watch.py`) que varre **Discussions, Issues abertas e PRs
-abertos** de todos os repositórios da conta autenticada no `gh` e avisa via Telegram quando o
+Script complementar (`github-replies-watch.py`) que varre **Discussions, Issues abertas, PRs
+abertos e relatos privados de vulnerabilidade** de todos os repositórios da conta autenticada no `gh` e avisa via Telegram quando o
 último a falar numa thread **não é o dono** há pelo menos N dias. Silencioso nos dias em que
 não há nada pendente.
 
@@ -1607,6 +1607,12 @@ a v1.4.0 do plugin justamente porque foi vista a tempo.
   do GitHub e rotineiramente contêm `_` ou `*`, que o Markdown do Telegram trata como
   formatação e rejeita a mensagem inteira quando desbalanceado. Com HTML, `html.escape()`
   resolve.
+- **Relatos privados de vulnerabilidade:** também lista, em cada repositório, os relatos de
+  segurança ainda em triagem (`security-advisories?state=triage`, que só o dono vê). Eles avisam
+  já no primeiro dia, sem esperar `--days`, porque o `SECURITY.md` da conta promete primeira
+  resposta em até 7 dias; o lembrete segue o mesmo `--remind-days`. A mensagem leva só o
+  identificador e o link: o resumo da falha não sai do GitHub. Um relato sai da lista quando o
+  dono o aceita ou fecha. Repositório com o relato privado desligado responde lista vazia.
 - `--dry-run` imprime em vez de enviar (e não grava estado); `--test-telegram` manda uma
   mensagem de teste e sai — use para validar token/chat ao configurar.
 
